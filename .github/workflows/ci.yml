@@ -143,12 +143,31 @@ jobs:
           echo "=== sanity: apt --version (bionic exec) ==="
           "$TERMUX_PREFIX/bin/apt" --version
 
-          echo "=== DNS test ==="
-          "$TERMUX_PREFIX/bin/curl" -sI --max-time 10 https://github.com | head -2
+          # Bionic resolver doesn't talk to systemd-resolved (127.0.0.53).
+          # Override resolv.conf in both glibc and bionic search paths.
+          echo "=== overriding DNS to 8.8.8.8 + 1.1.1.1 ==="
+          sudo mkdir -p /system/etc
+          printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\n' | sudo tee /etc/resolv.conf /system/etc/resolv.conf
 
-          echo "=== install rust + git ==="
-          "$TERMUX_PREFIX/bin/apt" update -y 2>&1 | tail -8
-          "$TERMUX_PREFIX/bin/apt" install -y rust git 2>&1 | tail -5
+          # Pre-seed /etc/hosts with termux mirror IPs (resolved via glibc on host)
+          # so bionic skips DNS entirely for known package hosts.
+          echo "=== preseeding /etc/hosts ==="
+          for host in packages-cf.termux.dev packages.termux.dev github.com; do
+            IP=$(getent ahosts "$host" 2>/dev/null | awk '/STREAM/{print $1; exit}')
+            if [ -n "$IP" ]; then
+              echo "$IP $host" | sudo tee -a /etc/hosts
+            fi
+          done
+
+          echo "=== DNS test (verbose) ==="
+          "$TERMUX_PREFIX/bin/curl" -v --max-time 15 -o /dev/null -s -w "code=%{http_code}\n" https://github.com 2>&1 | tail -10 || echo "(curl exit nonzero)"
+
+          echo "=== apt update ==="
+          "$TERMUX_PREFIX/bin/apt" update -y 2>&1 | tail -10
+
+          echo "=== apt install rust git ==="
+          "$TERMUX_PREFIX/bin/apt" install -y rust git 2>&1 | tail -10
+
           "$TERMUX_PREFIX/bin/rustc" --version
 
           echo "=== snapshot tarball ==="
