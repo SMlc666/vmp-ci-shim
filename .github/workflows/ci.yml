@@ -128,9 +128,9 @@ jobs:
           sudo systemctl is-active tinyproxy
           curl -sI --max-time 10 -x http://127.0.0.1:3128 https://github.com | head -2
 
-      - name: Cache bionic userland (extracted from pre-baked image)
+      - name: Restore bionic userland cache (extracted from pre-baked image)
         id: bionic-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: /tmp/bionic-userland.tar
           # Cache key is tied to the image tag only — ci.yml edits no longer
@@ -168,6 +168,17 @@ jobs:
           echo "=== snapshot tarball ==="
           sudo tar -cf /tmp/bionic-userland.tar /data/data/com.termux /system 2>/dev/null
           ls -lh /tmp/bionic-userland.tar
+
+      - name: Save bionic userland cache
+        # Explicit save BEFORE cargo test runs — actions/cache@v4's bundled
+        # post-step skips save when a later step fails, and cargo test
+        # routinely fails in bionic (continue-on-error). Saving here keeps
+        # the warm-cache path independent of test outcome.
+        if: steps.bionic-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/bionic-userland.tar
+          key: bionic-userland-v5-image-v1
 
       - name: Restore bionic userland (cache hit)
         if: steps.bionic-cache.outputs.cache-hit == 'true'
