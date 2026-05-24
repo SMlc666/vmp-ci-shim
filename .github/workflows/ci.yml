@@ -199,6 +199,11 @@ jobs:
           # blocker, same proxy fix.
           export HTTPS_PROXY=http://127.0.0.1:3128
           export HTTP_PROXY=http://127.0.0.1:3128
+          # Override project's .cargo/config.toml NDK paths (which only exist on
+          # the dev box) with termux's own clang. CARGO_TARGET_*_LINKER env var
+          # takes precedence over workspace cargo config.
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TERMUX_PREFIX/bin/clang"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_AR="$TERMUX_PREFIX/bin/llvm-ar"
 
           # Move source into termux home so build artifacts are in bionic-land
           cp -r src "$TERMUX_HOME/src"
