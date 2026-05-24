@@ -276,11 +276,13 @@ jobs:
           if-no-files-found: warn
 
   notify_failure:
-    # Fire on glibc OR bionic failure. continue-on-error on bionic keeps
-    # the workflow conclusion green, but needs.<job>.result still returns
-    # the actual outcome, so this gate is independent of continue-on-error.
+    # Fire on glibc OR bionic failure.
+    # NOTE: continue-on-error: true at JOB level MASKS needs.<job>.result
+    # to "success" (downstream sees the job as satisfied). The step-level
+    # outcome survives via the job's exposed `outputs.result` field — that's
+    # what we gate on for bionic.
     needs: [private_glibc, private_bionic]
-    if: needs.private_glibc.result == 'failure' || needs.private_bionic.result == 'failure'
+    if: needs.private_glibc.result == 'failure' || needs.private_bionic.outputs.result == 'failure'
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Send Telegram alert
