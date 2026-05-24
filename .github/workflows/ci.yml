@@ -117,44 +117,41 @@ jobs:
           mkdir -p /tmp/bionic-out
           sudo chown 1000:1000 /tmp/bionic-out
 
-          # Container starts as root so termux entrypoint can init dnsmasq for DNS.
-          # We `su system` inside for the apt/cargo work that termux requires non-root.
-          # --network host gives the container access to host's resolv.conf as backup.
+          # Image's USER directive drops to UID 1000 (system) automatically.
+          # No --user override, no su. --network host shares host's network stack.
+          # We chown the mounted dirs from host BEFORE entering container so
+          # UID 1000 can write to them.
           docker run --rm \
             --network host \
             -v "$PWD/src:/data/data/com.termux/files/home/src" \
             -v /tmp/bionic-out:/data/data/com.termux/files/home/out \
             termux/termux-docker:aarch64 \
             sh -c '
-              set -e
-              echo "=== as root, post-init ==="
-              id
-              cat /etc/resolv.conf | head -5
-              echo "=== root DNS sanity ==="
-              curl -sI --max-time 10 https://github.com | head -2 || { echo "FAIL: HTTPS broken even as root"; exit 90; }
+              echo "=== id ==="; id
+              echo "=== resolv.conf ==="; cat /etc/resolv.conf
+              echo "=== DNS test (curl verbose) ==="
+              curl -v --max-time 15 -o /dev/null -s -w "code=%{http_code}\n" https://github.com 2>&1 | tail -15
 
-              chown -R system:system /data/data/com.termux/files/home/src /data/data/com.termux/files/home/out
+              echo "=== try apt update ==="
+              apt update -y 2>&1 | tail -15
 
-              echo "=== switching to system user ==="
-              su -s /bin/sh system -c "
-                set -e
-                echo \"=== as system, install rust ===\"
-                apt update -y 2>&1 | tail -10
-                apt install -y rust git 2>&1 | tail -5
-                rustc --version
+              echo "=== try apt install ==="
+              apt install -y rust git 2>&1 | tail -10
 
-                echo \"=== cargo test ===\"
-                cd /data/data/com.termux/files/home/src
-                cargo test --workspace --quiet -- \
-                  --skip byte_identical \
-                  --skip _ndk_ \
-                  --skip _bytecode_ \
-                  --skip pattern_b_assemble \
-                  --skip v13_regalloc_pipeline_wiring \
-                  --skip proc_maps_test \
-                  2>&1 | tee /data/data/com.termux/files/home/out/test.log
-                exit \${PIPESTATUS[0]}
-              "
+              echo "=== rustc check ==="
+              rustc --version || echo "FAIL: no rustc"
+
+              echo "=== cargo test ==="
+              cd /data/data/com.termux/files/home/src
+              cargo test --workspace --quiet -- \
+                --skip byte_identical \
+                --skip _ndk_ \
+                --skip _bytecode_ \
+                --skip pattern_b_assemble \
+                --skip v13_regalloc_pipeline_wiring \
+                --skip proc_maps_test \
+                2>&1 | tee /data/data/com.termux/files/home/out/test.log
+              exit ${PIPESTATUS[0]}
             ' 2>&1 | tee /tmp/test-outer.log
           rc=${PIPESTATUS[0]}
 
