@@ -140,10 +140,18 @@ jobs:
             cd -
           fi
 
-          echo "=== termux prefix ==="
-          ls "$TERMUX_PREFIX/bin" | head -10
-          echo "=== test apt binary works (bionic linker invoked transparently) ==="
-          "$TERMUX_PREFIX/bin/apt" --version || { echo "FAIL: apt binary cannot run"; exit 1; }
+          # Termux binaries have PT_INTERP=/system/bin/linker64 and search /system/lib64
+          # for libs. These paths are Android-specific; on Linux we just symlink them
+          # to the bionic linker + libs shipped in the bootstrap. This is what
+          # termux-docker does in its Dockerfile.
+          sudo mkdir -p /system/bin
+          sudo ln -sf "$TERMUX_PREFIX/lib" /system/lib64
+          sudo ln -sf "$TERMUX_PREFIX/lib/ld-android.so" /system/bin/linker64
+          echo "=== verify symlinks ==="
+          ls -la /system/bin/linker64 /system/lib64
+
+          echo "=== test apt binary (bionic linker invoked transparently) ==="
+          "$TERMUX_PREFIX/bin/apt" --version || { echo "FAIL: apt cannot run after symlink fix"; exit 1; }
 
       - name: Install rust + git via termux apt
         run: |
