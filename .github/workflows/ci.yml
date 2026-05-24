@@ -83,14 +83,19 @@ jobs:
           path: /tmp/test.log
           retention-days: 7
 
-  # Bionic job runs on HOST (not container:) so GHA actions work (Node20).
-  # Cargo test step explicitly invokes `docker run --network host` to enter
-  # termux/bionic, bypassing GHA's container-DNS-proxy limitation.
+  # Bionic job: native execution of termux's bionic userland on the ARM64
+  # Linux host. No Docker, no chroot — just extract termux bootstrap to the
+  # path baked into its binaries (/data/data/com.termux/files) and invoke
+  # them directly. Bionic linker + libs ship in the tarball; Linux kernel
+  # doesn't care which libc a process uses.
   private_bionic:
     runs-on: ubuntu-24.04-arm
     outputs:
       result: ${{ steps.test.outcome }}
       failures: ${{ steps.test.outputs.failures }}
+    env:
+      TERMUX_PREFIX: /data/data/com.termux/files/usr
+      TERMUX_HOME: /data/data/com.termux/files/home
     steps:
       - uses: webfactory/ssh-agent@v0.9.0
         with:
@@ -99,68 +104,93 @@ jobs:
       - name: Trust GitHub host key
         run: ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
 
-      - name: Clone & checkout (on host)
+      - name: Clone & checkout
         run: |
           git clone --depth 50 "$PRIVATE_REPO_URL" src
           cd src && git checkout "${{ inputs.commit_sha }}"
         env:
           PRIVATE_REPO_URL: ${{ secrets.PRIVATE_REPO_URL }}
 
-      - name: Pre-pull termux image (timing isolated)
-        run: docker pull termux/termux-docker:aarch64
+      - name: Bootstrap termux bionic userland
+        run: |
+          # Termux binaries hard-code /data/data/com.termux/files/ — must use this path
+          sudo mkdir -p "$TERMUX_PREFIX" "$TERMUX_HOME"
+          sudo chown -R "$USER:$USER" /data/data/com.termux
+
+          # Latest bootstrap from termux-packages releases
+          BOOTSTRAP_URL=$(curl -fsSL https://api.github.com/repos/termux/termux-packages/releases/latest \
+            | python3 -c "import json,sys; r=json.load(sys.stdin); [print(a['browser_download_url']) for a in r['assets'] if 'bootstrap-aarch64' in a['name']]" \
+            | head -1)
+          echo "Bootstrap URL: $BOOTSTRAP_URL"
+
+          cd /tmp
+          curl -fsSL "$BOOTSTRAP_URL" -o bootstrap.zip
+          ls -lh bootstrap.zip
+
+          # Extract directly to $PREFIX
+          unzip -q bootstrap.zip -d "$TERMUX_PREFIX"
+
+          # Create symlinks listed in SYMLINKS.txt (termux uses ← as separator)
+          if [ -f "$TERMUX_PREFIX/SYMLINKS.txt" ]; then
+            cd "$TERMUX_PREFIX"
+            while IFS='←' read -r src dst; do
+              [ -n "$src" ] && [ -n "$dst" ] && ln -sf "$src" "$dst"
+            done < SYMLINKS.txt
+            rm SYMLINKS.txt
+            cd -
+          fi
+
+          echo "=== termux prefix ==="
+          ls "$TERMUX_PREFIX/bin" | head -10
+          echo "=== test apt binary works (bionic linker invoked transparently) ==="
+          "$TERMUX_PREFIX/bin/apt" --version || { echo "FAIL: apt binary cannot run"; exit 1; }
+
+      - name: Install rust + git via termux apt
+        run: |
+          export PREFIX="$TERMUX_PREFIX"
+          export HOME="$TERMUX_HOME"
+          export PATH="$TERMUX_PREFIX/bin:$PATH"
+          export LD_LIBRARY_PATH="$TERMUX_PREFIX/lib"
+
+          # bionic resolver should use host's /etc/resolv.conf
+          echo "=== DNS test ==="
+          "$TERMUX_PREFIX/bin/curl" -sI --max-time 10 https://github.com | head -2 || { echo "FAIL: curl/DNS"; exit 1; }
+
+          echo "=== apt update ==="
+          "$TERMUX_PREFIX/bin/apt" update -y 2>&1 | tail -10
+
+          echo "=== apt install rust git ==="
+          "$TERMUX_PREFIX/bin/apt" install -y rust git 2>&1 | tail -10
+
+          echo "=== rustc version ==="
+          "$TERMUX_PREFIX/bin/rustc" --version
 
       - id: test
-        name: Run cargo test inside termux (host network)
+        name: Run cargo test against bionic
         run: |
-          # chown so UID 1000 (termux 'system' user) can read/write the mount
-          sudo chown -R 1000:1000 src
-          mkdir -p /tmp/bionic-out
-          sudo chown 1000:1000 /tmp/bionic-out
+          export PREFIX="$TERMUX_PREFIX"
+          export HOME="$TERMUX_HOME"
+          export PATH="$TERMUX_PREFIX/bin:$PATH"
+          export LD_LIBRARY_PATH="$TERMUX_PREFIX/lib"
 
-          # Image's USER directive drops to UID 1000 (system) automatically.
-          # No --user override, no su. --network host shares host's network stack.
-          # We chown the mounted dirs from host BEFORE entering container so
-          # UID 1000 can write to them.
-          docker run --rm \
-            --network host \
-            -v "$PWD/src:/data/data/com.termux/files/home/src" \
-            -v /tmp/bionic-out:/data/data/com.termux/files/home/out \
-            termux/termux-docker:aarch64 \
-            sh -c '
-              echo "=== id ==="; id
-              echo "=== resolv.conf ==="; cat /etc/resolv.conf
-              echo "=== DNS test (curl verbose) ==="
-              curl -v --max-time 15 -o /dev/null -s -w "code=%{http_code}\n" https://github.com 2>&1 | tail -15
+          # Move source into termux home so build artifacts are in bionic-land
+          cp -r src "$TERMUX_HOME/src"
+          cd "$TERMUX_HOME/src"
 
-              echo "=== try apt update ==="
-              apt update -y 2>&1 | tail -15
-
-              echo "=== try apt install ==="
-              apt install -y rust git 2>&1 | tail -10
-
-              echo "=== rustc check ==="
-              rustc --version || echo "FAIL: no rustc"
-
-              echo "=== cargo test ==="
-              cd /data/data/com.termux/files/home/src
-              cargo test --workspace --quiet -- \
-                --skip byte_identical \
-                --skip _ndk_ \
-                --skip _bytecode_ \
-                --skip pattern_b_assemble \
-                --skip v13_regalloc_pipeline_wiring \
-                --skip proc_maps_test \
-                2>&1 | tee /data/data/com.termux/files/home/out/test.log
-              exit ${PIPESTATUS[0]}
-            ' 2>&1 | tee /tmp/test-outer.log
+          "$TERMUX_PREFIX/bin/cargo" test --workspace --quiet -- \
+            --skip byte_identical \
+            --skip _ndk_ \
+            --skip _bytecode_ \
+            --skip pattern_b_assemble \
+            --skip v13_regalloc_pipeline_wiring \
+            --skip proc_maps_test \
+            2>&1 | tee /tmp/test.log
           rc=${PIPESTATUS[0]}
 
-          # Scrub paths in the inner log
-          sed -i "s|/data/data/com.termux/[^[:space:]]*|<WORK>|g" /tmp/bionic-out/test.log 2>/dev/null || true
-
-          if [ $rc -ne 0 ] && [ -f /tmp/bionic-out/test.log ]; then
-            grep -E '^test .* FAILED' /tmp/bionic-out/test.log | head -20 > /tmp/failures.txt
-            tail -50 /tmp/bionic-out/test.log >> /tmp/failures.txt
+          sed -i "s|/data/data/com.termux/[^[:space:]]*|<WORK>|g" /tmp/test.log
+          if [ $rc -ne 0 ]; then
+            grep -E '^test .* FAILED' /tmp/test.log | head -20 > /tmp/failures.txt
+            tail -50 /tmp/test.log >> /tmp/failures.txt
             {
               echo "failures<<EOF_FAIL"
               cat /tmp/failures.txt
@@ -173,9 +203,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-log-bionic-${{ inputs.commit_sha }}
-          path: |
-            /tmp/test-outer.log
-            /tmp/bionic-out/test.log
+          path: /tmp/test.log
           retention-days: 7
           if-no-files-found: warn
 
