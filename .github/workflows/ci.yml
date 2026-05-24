@@ -87,44 +87,50 @@ jobs:
     runs-on: ubuntu-24.04-arm
     container:
       image: termux/termux-docker:aarch64
-      options: --user 1000:1000
+      # --dns 8.8.8.8 bypasses termux container's broken default resolv.conf.
+      # No webfactory/ssh-agent / upload-artifact actions used in this job
+      # because termux image lacks /__e/node20/bin/node, breaking JS actions.
+      options: --user 1000:1000 --dns 8.8.8.8 --dns 1.1.1.1
     outputs:
       result: ${{ steps.test.outcome }}
       failures: ${{ steps.test.outputs.failures }}
+    env:
+      DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+      PRIVATE_REPO_URL: ${{ secrets.PRIVATE_REPO_URL }}
+      COMMIT_SHA: ${{ inputs.commit_sha }}
     steps:
-      - name: Diagnose termux environment
+      - name: Diagnose container environment
         run: |
-          echo "=== whoami / id ==="
-          id
-          echo "=== PREFIX ==="
-          echo "$PREFIX"
-          ls -la "$PREFIX/etc/apt/" 2>&1 | head -5
-          echo "=== HTTPS reachability ==="
-          curl -sI --max-time 10 https://github.com | head -3 || echo "FAIL: HTTPS unreachable"
-          curl -sI --max-time 10 https://packages-cf.termux.dev/apt/termux-main/dists/stable/Release | head -3 || echo "FAIL: termux mirror unreachable"
-          echo "=== current sources.list ==="
-          cat "$PREFIX/etc/apt/sources.list" 2>&1 || echo "(no sources.list)"
+          echo "=== id ==="; id
+          echo "=== resolv.conf ==="; cat /etc/resolv.conf 2>&1 || echo "(missing)"
+          echo "=== DNS test (nslookup unavailable, use getent) ==="
+          getent hosts github.com 2>&1 || echo "FAIL: github.com DNS"
+          getent hosts packages-cf.termux.dev 2>&1 || echo "FAIL: termux mirror DNS"
+          echo "=== curl github with -v (visible failure) ==="
+          curl -v --max-time 10 -o /dev/null -s -w "code=%{http_code}\n" https://github.com 2>&1 | tail -10
 
-      - name: Force termux mirror + install build deps
+      - name: Install build deps via apt
         run: |
-          # Skip pkg's broken auto-select by writing sources.list directly
-          echo "deb https://packages-cf.termux.dev/apt/termux-main stable main" > "$PREFIX/etc/apt/sources.list"
-          apt update -y 2>&1 | tail -20
+          # Default sources.list already points at packages-cf.termux.dev.
+          # Just update + install.
+          apt update -y 2>&1 | tail -15
           apt install -y rust git openssh 2>&1 | tail -10
+          echo "=== rust version ==="
+          rustc --version || echo "FAIL: rust not installed"
 
-      - uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.DEPLOY_KEY }}
-
-      - name: Trust GitHub host key
-        run: ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
+      - name: Manual SSH setup (no actions in container)
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -t ed25519 github.com 2>/dev/null >> ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+          ls -la ~/.ssh/
 
       - name: Clone & checkout
         run: |
           git clone --depth 50 "$PRIVATE_REPO_URL" src
-          cd src && git checkout "${{ inputs.commit_sha }}"
-        env:
-          PRIVATE_REPO_URL: ${{ secrets.PRIVATE_REPO_URL }}
+          cd src && git checkout "$COMMIT_SHA"
 
       - id: test
         name: Run cargo test
@@ -150,13 +156,6 @@ jobs:
             } >> "$GITHUB_OUTPUT"
           fi
           exit $rc
-
-      - if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-log-bionic-${{ inputs.commit_sha }}
-          path: /tmp/test.log
-          retention-days: 7
 
   notify_failure:
     needs: [private_glibc, private_bionic]
