@@ -1,0 +1,61 @@
+name: Build bionic CI image
+
+# Manually triggered. Pushes ghcr.io/<owner>/termux-rust:<tag> + :latest.
+# private_bionic in ci.yml consumes this image instead of pulling
+# termux/termux-docker + apt-installing rust each cache miss.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag (e.g., v1)'
+        required: true
+        default: 'v1'
+      push_latest:
+        description: 'Also tag :latest'
+        required: false
+        default: 'true'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install + start tinyproxy (build-host DNS for bionic apt)
+        run: |
+          sudo apt-get install -y tinyproxy >/dev/null
+          sudo bash -c 'printf "%s\n" "User tinyproxy" "Group tinyproxy" "Port 3128" "Listen 127.0.0.1" "Timeout 600" "LogLevel Warning" "PidFile \"/run/tinyproxy/tinyproxy.pid\"" "MaxClients 100" "Allow 127.0.0.1" "ConnectPort 443" "ConnectPort 80" "DisableViaHeader Yes" > /etc/tinyproxy/tinyproxy.conf'
+          sudo systemctl restart tinyproxy
+          sudo systemctl is-active tinyproxy
+          curl -sI --max-time 10 -x http://127.0.0.1:3128 https://github.com | head -2
+
+      - name: Log in to ghcr.io
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build image
+        env:
+          DOCKER_BUILDKIT: '1'
+        run: |
+          IMAGE=ghcr.io/${{ github.repository_owner }}/termux-rust
+          docker build --network host \
+            --build-arg BUILD_PROXY=http://127.0.0.1:3128/ \
+            -t "$IMAGE:${{ inputs.tag }}" \
+            -f docker/Dockerfile docker/
+          if [ "${{ inputs.push_latest }}" = "true" ]; then
+            docker tag "$IMAGE:${{ inputs.tag }}" "$IMAGE:latest"
+          fi
+          docker images | grep termux-rust
+
+      - name: Push image
+        run: |
+          IMAGE=ghcr.io/${{ github.repository_owner }}/termux-rust
+          docker push "$IMAGE:${{ inputs.tag }}"
+          if [ "${{ inputs.push_latest }}" = "true" ]; then
+            docker push "$IMAGE:latest"
+          fi
+          echo "::notice::Pushed $IMAGE:${{ inputs.tag }}"
