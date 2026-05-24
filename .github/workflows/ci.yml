@@ -87,6 +87,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     container:
       image: termux/termux-docker:aarch64
+      options: --user 1000:1000
     outputs:
       result: ${{ steps.test.outcome }}
       failures: ${{ steps.test.outputs.failures }}
