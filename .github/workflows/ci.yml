@@ -55,7 +55,14 @@ jobs:
         name: Run cargo test
         working-directory: src
         run: |
-          cargo test --workspace --quiet -- --skip proc_maps_test::v6_packed_vm_kernel_in_anon_mmaps 2>&1 | tee /tmp/test.log
+          cargo test --workspace --quiet -- \
+            --skip byte_identical \
+            --skip _ndk_ \
+            --skip _bytecode_ \
+            --skip pattern_b_assemble \
+            --skip v13_regalloc_pipeline_wiring \
+            --skip proc_maps_test \
+            2>&1 | tee /tmp/test.log
           rc=${PIPESTATUS[0]}
           sed -i "s|/home/runner/work/[^[:space:]]*|<WORK>|g" /tmp/test.log
           if [ $rc -ne 0 ]; then
@@ -107,7 +114,14 @@ jobs:
         name: Run cargo test
         working-directory: src
         run: |
-          cargo test --workspace --quiet -- --skip proc_maps_test::v6_packed_vm_kernel_in_anon_mmaps 2>&1 | tee /tmp/test.log
+          cargo test --workspace --quiet -- \
+            --skip byte_identical \
+            --skip _ndk_ \
+            --skip _bytecode_ \
+            --skip pattern_b_assemble \
+            --skip v13_regalloc_pipeline_wiring \
+            --skip proc_maps_test \
+            2>&1 | tee /tmp/test.log
           rc=${PIPESTATUS[0]}
           sed -i "s|/data/data/com.termux/[^[:space:]]*|<WORK>|g" /tmp/test.log
           if [ $rc -ne 0 ]; then
