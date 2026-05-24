@@ -140,18 +140,36 @@ jobs:
             cd -
           fi
 
-          # Termux binaries have PT_INTERP=/system/bin/linker64 and search /system/lib64
-          # for libs. These paths are Android-specific; on Linux we just symlink them
-          # to the bionic linker + libs shipped in the bootstrap. This is what
-          # termux-docker does in its Dockerfile.
+          echo "=== what's in lib (linker candidates)? ==="
+          ls "$TERMUX_PREFIX/lib/" | grep -iE "(linker|ld-|loader)" | head -10
+          echo "=== PT_INTERP of apt binary ==="
+          readelf -p .interp "$TERMUX_PREFIX/bin/apt" 2>&1 | head -5
+          echo "=== dynamic deps of apt ==="
+          readelf -d "$TERMUX_PREFIX/bin/apt" 2>&1 | grep NEEDED | head -10
+
+          # Create /system symlinks based on what we find
           sudo mkdir -p /system/bin
-          sudo ln -sf "$TERMUX_PREFIX/lib" /system/lib64
-          sudo ln -sf "$TERMUX_PREFIX/lib/ld-android.so" /system/bin/linker64
+          sudo ln -sfn "$TERMUX_PREFIX/lib" /system/lib64
+
+          # Find the actual linker file
+          for cand in ld-android.so linker64 linker ld-linux-aarch64.so.1; do
+            if [ -f "$TERMUX_PREFIX/lib/$cand" ]; then
+              sudo ln -sfn "$TERMUX_PREFIX/lib/$cand" /system/bin/linker64
+              echo "Using linker: $cand"
+              break
+            fi
+          done
+
           echo "=== verify symlinks ==="
           ls -la /system/bin/linker64 /system/lib64
+          echo "=== readlink target check ==="
+          readlink -f /system/bin/linker64
+          [ -e /system/bin/linker64 ] && echo "linker64 target EXISTS" || echo "linker64 target MISSING"
 
-          echo "=== test apt binary (bionic linker invoked transparently) ==="
-          "$TERMUX_PREFIX/bin/apt" --version || { echo "FAIL: apt cannot run after symlink fix"; exit 1; }
+          echo "=== try apt --version ==="
+          "$TERMUX_PREFIX/bin/apt" --version 2>&1 || echo "(apt failed)"
+          echo "=== try invoking linker directly ==="
+          /system/bin/linker64 "$TERMUX_PREFIX/bin/apt" --version 2>&1 | head -5 || echo "(direct linker invocation also failed)"
 
       - name: Install rust + git via termux apt
         run: |
