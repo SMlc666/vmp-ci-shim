@@ -84,10 +84,10 @@ jobs:
           retention-days: 7
 
   # Bionic job: native execution of termux's bionic userland on the ARM64
-  # Linux host. No Docker, no chroot — just extract termux bootstrap to the
-  # path baked into its binaries (/data/data/com.termux/files) and invoke
-  # them directly. Bionic linker + libs ship in the tarball; Linux kernel
-  # doesn't care which libc a process uses.
+  # Linux host. No Docker, no chroot — extract a pre-baked termux+rust
+  # image to /data/data/com.termux + /system and invoke binaries directly.
+  # Linux kernel doesn't care which libc a process uses; only the linker
+  # path needs to exist (/system/bin/linker64 from the image).
   private_bionic:
     runs-on: ubuntu-24.04-arm
     # Bionic runs are "indicator" status only — surface failures in GHA UI but
@@ -99,6 +99,9 @@ jobs:
     env:
       TERMUX_PREFIX: /data/data/com.termux/files/usr
       TERMUX_HOME: /data/data/com.termux/files/home
+      # Pre-baked image with rust + git pre-installed. Bump the tag when
+      # the Dockerfile changes (and rebuild via build-bionic-image.yml).
+      BIONIC_IMAGE: ghcr.io/smlc666/termux-rust:v1
     steps:
       - uses: webfactory/ssh-agent@v0.9.0
         with:
@@ -125,54 +128,42 @@ jobs:
           sudo systemctl is-active tinyproxy
           curl -sI --max-time 10 -x http://127.0.0.1:3128 https://github.com | head -2
 
-      - name: Cache bionic userland (full termux + /system + rust)
+      - name: Cache bionic userland (extracted from pre-baked image)
         id: bionic-cache
         uses: actions/cache@v4
         with:
           path: /tmp/bionic-userland.tar
-          key: bionic-userland-v4-${{ hashFiles('.github/workflows/ci.yml') }}
+          # Cache key is tied to the image tag only — ci.yml edits no longer
+          # invalidate. Bump BIONIC_IMAGE tag → bump cache key string here.
+          key: bionic-userland-v5-image-v1
 
-      - name: Extract bionic from termux-docker image (cache miss)
+      - name: Log in to ghcr.io
+        if: steps.bionic-cache.outputs.cache-hit != 'true'
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Extract bionic from pre-baked image (cache miss)
         if: steps.bionic-cache.outputs.cache-hit != 'true'
         run: |
           set -e
-          echo "=== docker pull termux ==="
-          docker pull termux/termux-docker:aarch64
+          echo "=== docker pull $BIONIC_IMAGE ==="
+          docker pull "$BIONIC_IMAGE"
 
           echo "=== docker create + cp ==="
-          docker create --name termux-extract termux/termux-docker:aarch64 sleep infinity
+          docker create --name termux-extract "$BIONIC_IMAGE" sleep infinity
           sudo mkdir -p /data/data/com.termux
           sudo docker cp termux-extract:/data/data/com.termux/files /data/data/com.termux/files
           sudo docker cp termux-extract:/system /system
           docker rm termux-extract
 
-          # Make termux tree owned by runner user (binaries still executable; uid doesn't matter for ELF exec)
           sudo chown -R "$USER:$USER" /data/data/com.termux
-          # /system stays root-owned (it's just linker + lib symlinks; only need read access)
 
           echo "=== sanity: bionic linker present ==="
           ls -la /system/bin/linker64 /system/lib64
           [ -e /system/bin/linker64 ] && echo "linker target EXISTS" || { echo "FAIL: linker missing"; exit 1; }
 
-          echo "=== sanity: apt --version (bionic exec) ==="
-          "$TERMUX_PREFIX/bin/apt" --version
-
-          # Configure termux apt to use the host-side proxy (started in earlier step).
-          mkdir -p "$TERMUX_PREFIX/etc/apt/apt.conf.d"
-          printf '%s\n' 'Acquire::http::Proxy "http://127.0.0.1:3128/";' 'Acquire::https::Proxy "http://127.0.0.1:3128/";' > "$TERMUX_PREFIX/etc/apt/apt.conf.d/99proxy"
-
-          # Pre-create apt's cache dirs (termux init normally does this, but
-          # the docker-extracted tree doesn't carry runtime dirs).
-          mkdir -p /data/data/com.termux/cache/apt/archives/partial
-          mkdir -p /data/data/com.termux/cache/apt/lists/partial
-
-          echo "=== apt update via proxy ==="
-          "$TERMUX_PREFIX/bin/apt" update -y 2>&1 | tail -10
-
-          echo "=== apt install rust git via proxy ==="
-          "$TERMUX_PREFIX/bin/apt" install -y rust git 2>&1 | tail -10
-
+          echo "=== sanity: rustc baked in ==="
           "$TERMUX_PREFIX/bin/rustc" --version
+          "$TERMUX_PREFIX/bin/git" --version
 
           echo "=== snapshot tarball ==="
           sudo tar -cf /tmp/bionic-userland.tar /data/data/com.termux /system 2>/dev/null
@@ -185,7 +176,6 @@ jobs:
           echo "=== restoring cached bionic tarball ==="
           ls -lh /tmp/bionic-userland.tar
           sudo tar -xf /tmp/bionic-userland.tar -C /
-          # Ensure runner user owns the termux tree post-extract
           sudo chown -R "$USER:$USER" /data/data/com.termux
 
           echo "=== sanity check ==="
