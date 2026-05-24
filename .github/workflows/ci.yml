@@ -192,6 +192,22 @@ jobs:
           echo "=== sanity check ==="
           "$TERMUX_PREFIX/bin/rustc" --version || { echo "FAIL: cached rust broken"; exit 1; }
 
+      - name: Restore cargo cache (bionic)
+        # Caches ~/.cargo/registry, ~/.cargo/git, and CARGO_TARGET_DIR
+        # ($HOME/target, redirected away from $HOME/src/target so cp -r doesn't
+        # collide). Key tied to Cargo.lock hash; restore-keys gives partial
+        # match for incremental compile when Cargo.lock changes.
+        id: cargo-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            /data/data/com.termux/files/home/.cargo/registry
+            /data/data/com.termux/files/home/.cargo/git
+            /data/data/com.termux/files/home/target
+          key: cargo-bionic-${{ hashFiles('src/Cargo.lock') }}
+          restore-keys: |
+            cargo-bionic-
+
       - id: test
         name: Run cargo test against bionic
         run: |
@@ -208,8 +224,11 @@ jobs:
           # takes precedence over workspace cargo config.
           export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TERMUX_PREFIX/bin/clang"
           export CARGO_TARGET_AARCH64_LINUX_ANDROID_AR="$TERMUX_PREFIX/bin/llvm-ar"
+          # Redirect target/ outside src/ — keeps cp -r non-colliding with
+          # cache-restored target, and lets CARGO_TARGET_DIR alone control
+          # cache contents.
+          export CARGO_TARGET_DIR="$TERMUX_HOME/target"
 
-          # Move source into termux home so build artifacts are in bionic-land
           cp -r src "$TERMUX_HOME/src"
           cd "$TERMUX_HOME/src"
 
@@ -235,6 +254,19 @@ jobs:
           fi
           exit $rc
 
+      - name: Save cargo cache (bionic)
+        # if: always() — save even when cargo test fails (87 e2e are known
+        # noise; we still want the compile artifacts cached). Skip when
+        # exact-key cache-hit (no new content to save).
+        if: always() && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            /data/data/com.termux/files/home/.cargo/registry
+            /data/data/com.termux/files/home/.cargo/git
+            /data/data/com.termux/files/home/target
+          key: cargo-bionic-${{ hashFiles('src/Cargo.lock') }}
+
       - if: failure()
         uses: actions/upload-artifact@v4
         with:
@@ -244,10 +276,11 @@ jobs:
           if-no-files-found: warn
 
   notify_failure:
-    # Only fire on glibc failure. Bionic is continue-on-error (indicator only),
-    # its failures don't trigger Telegram noise.
+    # Fire on glibc OR bionic failure. continue-on-error on bionic keeps
+    # the workflow conclusion green, but needs.<job>.result still returns
+    # the actual outcome, so this gate is independent of continue-on-error.
     needs: [private_glibc, private_bionic]
-    if: needs.private_glibc.result == 'failure'
+    if: needs.private_glibc.result == 'failure' || needs.private_bionic.result == 'failure'
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Send Telegram alert
