@@ -111,12 +111,36 @@ jobs:
         env:
           PRIVATE_REPO_URL: ${{ secrets.PRIVATE_REPO_URL }}
 
+      - name: Install + start HTTP proxy (tinyproxy)
+        # tinyproxy bridges bionic's broken DNS by accepting CONNECT on 127.0.0.1
+        # and resolving upstream hostnames via host's glibc. Must run BEFORE
+        # any termux apt/cargo network activity, regardless of cache hit/miss.
+        run: |
+          sudo apt-get install -y tinyproxy >/dev/null
+          sudo bash -c 'cat > /etc/tinyproxy/tinyproxy.conf' <<'PROXY'
+User tinyproxy
+Group tinyproxy
+Port 3128
+Listen 127.0.0.1
+Timeout 600
+LogLevel Warning
+PidFile "/run/tinyproxy/tinyproxy.pid"
+MaxClients 100
+Allow 127.0.0.1
+ConnectPort 443
+ConnectPort 80
+DisableViaHeader Yes
+PROXY
+          sudo systemctl restart tinyproxy
+          sudo systemctl is-active tinyproxy
+          curl -sI --max-time 10 -x http://127.0.0.1:3128 https://github.com | head -2
+
       - name: Cache bionic userland (full termux + /system + rust)
         id: bionic-cache
         uses: actions/cache@v4
         with:
           path: /tmp/bionic-userland.tar
-          key: bionic-userland-v3-${{ hashFiles('.github/workflows/ci.yml') }}
+          key: bionic-userland-v4-${{ hashFiles('.github/workflows/ci.yml') }}
 
       - name: Extract bionic from termux-docker image (cache miss)
         if: steps.bionic-cache.outputs.cache-hit != 'true'
@@ -143,29 +167,17 @@ jobs:
           echo "=== sanity: apt --version (bionic exec) ==="
           "$TERMUX_PREFIX/bin/apt" --version
 
-          # Bionic resolver doesn't talk to systemd-resolved (127.0.0.53).
-          # Override resolv.conf in both glibc and bionic search paths.
-          echo "=== overriding DNS to 8.8.8.8 + 1.1.1.1 ==="
-          sudo mkdir -p /system/etc
-          printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\n' | sudo tee /etc/resolv.conf /system/etc/resolv.conf
+          # Configure termux apt to use the host-side proxy (started in earlier step).
+          mkdir -p "$TERMUX_PREFIX/etc/apt/apt.conf.d"
+          cat > "$TERMUX_PREFIX/etc/apt/apt.conf.d/99proxy" <<'EOAPT'
+Acquire::http::Proxy "http://127.0.0.1:3128/";
+Acquire::https::Proxy "http://127.0.0.1:3128/";
+EOAPT
 
-          # Pre-seed /etc/hosts with termux mirror IPs (resolved via glibc on host)
-          # so bionic skips DNS entirely for known package hosts.
-          echo "=== preseeding /etc/hosts ==="
-          for host in packages-cf.termux.dev packages.termux.dev github.com; do
-            IP=$(getent ahosts "$host" 2>/dev/null | awk '/STREAM/{print $1; exit}')
-            if [ -n "$IP" ]; then
-              echo "$IP $host" | sudo tee -a /etc/hosts
-            fi
-          done
-
-          echo "=== DNS test (verbose) ==="
-          "$TERMUX_PREFIX/bin/curl" -v --max-time 15 -o /dev/null -s -w "code=%{http_code}\n" https://github.com 2>&1 | tail -10 || echo "(curl exit nonzero)"
-
-          echo "=== apt update ==="
+          echo "=== apt update via proxy ==="
           "$TERMUX_PREFIX/bin/apt" update -y 2>&1 | tail -10
 
-          echo "=== apt install rust git ==="
+          echo "=== apt install rust git via proxy ==="
           "$TERMUX_PREFIX/bin/apt" install -y rust git 2>&1 | tail -10
 
           "$TERMUX_PREFIX/bin/rustc" --version
@@ -194,6 +206,10 @@ jobs:
           export HOME="$TERMUX_HOME"
           export PATH="$TERMUX_PREFIX/bin:$PATH"
           export LD_LIBRARY_PATH="$TERMUX_PREFIX/lib"
+          # Cargo also needs to reach crates.io for dep download — same bionic-DNS
+          # blocker, same proxy fix.
+          export HTTPS_PROXY=http://127.0.0.1:3128
+          export HTTP_PROXY=http://127.0.0.1:3128
 
           # Move source into termux home so build artifacts are in bionic-land
           cp -r src "$TERMUX_HOME/src"
