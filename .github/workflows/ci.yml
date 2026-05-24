@@ -117,38 +117,44 @@ jobs:
           mkdir -p /tmp/bionic-out
           sudo chown 1000:1000 /tmp/bionic-out
 
-          # docker run with --network host bypasses GHA's container-DNS proxy.
-          # No GHA actions execute inside the container — only shell commands.
+          # Container starts as root so termux entrypoint can init dnsmasq for DNS.
+          # We `su system` inside for the apt/cargo work that termux requires non-root.
+          # --network host gives the container access to host's resolv.conf as backup.
           docker run --rm \
-            --user 1000:1000 \
             --network host \
             -v "$PWD/src:/data/data/com.termux/files/home/src" \
             -v /tmp/bionic-out:/data/data/com.termux/files/home/out \
             termux/termux-docker:aarch64 \
             sh -c '
               set -e
-              echo "=== id / network sanity ==="
+              echo "=== as root, post-init ==="
               id
-              getent hosts github.com 2>&1 || echo "(getent unavailable, OK)"
-              curl -sI --max-time 10 https://github.com | head -2 || { echo "FAIL: HTTPS broken in container"; exit 90; }
+              cat /etc/resolv.conf | head -5
+              echo "=== root DNS sanity ==="
+              curl -sI --max-time 10 https://github.com | head -2 || { echo "FAIL: HTTPS broken even as root"; exit 90; }
 
-              echo "=== install rust + git ==="
-              apt update -y 2>&1 | tail -10
-              apt install -y rust git 2>&1 | tail -5
-              rustc --version
+              chown -R system:system /data/data/com.termux/files/home/src /data/data/com.termux/files/home/out
 
-              echo "=== run cargo test ==="
-              cd /data/data/com.termux/files/home/src
-              cargo test --workspace --quiet -- \
-                --skip byte_identical \
-                --skip _ndk_ \
-                --skip _bytecode_ \
-                --skip pattern_b_assemble \
-                --skip v13_regalloc_pipeline_wiring \
-                --skip proc_maps_test \
-                2>&1 | tee /data/data/com.termux/files/home/out/test.log
-              echo "=== test rc: ${PIPESTATUS[0]} ==="
-              exit ${PIPESTATUS[0]}
+              echo "=== switching to system user ==="
+              su -s /bin/sh system -c "
+                set -e
+                echo \"=== as system, install rust ===\"
+                apt update -y 2>&1 | tail -10
+                apt install -y rust git 2>&1 | tail -5
+                rustc --version
+
+                echo \"=== cargo test ===\"
+                cd /data/data/com.termux/files/home/src
+                cargo test --workspace --quiet -- \
+                  --skip byte_identical \
+                  --skip _ndk_ \
+                  --skip _bytecode_ \
+                  --skip pattern_b_assemble \
+                  --skip v13_regalloc_pipeline_wiring \
+                  --skip proc_maps_test \
+                  2>&1 | tee /data/data/com.termux/files/home/out/test.log
+                exit \${PIPESTATUS[0]}
+              "
             ' 2>&1 | tee /tmp/test-outer.log
           rc=${PIPESTATUS[0]}
 
