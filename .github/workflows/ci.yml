@@ -230,6 +230,13 @@ jobs:
           export CARGO_TARGET_DIR="$TERMUX_HOME/target"
 
           cp -r src "$TERMUX_HOME/src"
+          # vmp-lifter's e2e tests resolve vmp-runner via env!("CARGO_MANIFEST_DIR")/../target/<profile>/vmp-runner
+          # — a compile-time-baked relative path. With CARGO_TARGET_DIR pointing
+          # outside src/, that lookup misses unless src/target is symlinked to
+          # the real target dir. mkdir+ln-sfn covers both first run (target/
+          # doesn't exist yet) and cache-restored target.
+          mkdir -p "$TERMUX_HOME/target"
+          ln -sfn "$TERMUX_HOME/target" "$TERMUX_HOME/src/target"
           cd "$TERMUX_HOME/src"
 
           "$TERMUX_PREFIX/bin/cargo" test --workspace --quiet -- \
