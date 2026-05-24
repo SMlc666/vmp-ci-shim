@@ -1,0 +1,9 @@
+[package]
+name = "hello-arm64"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Demo crate for vmp-ci-shim — detects AArch64 NOP and host architecture."
+
+[lib]
+path = "src/lib.rs"

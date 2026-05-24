@@ -1,0 +1,167 @@
+name: CI
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: 'Commit SHA to test'
+        required: true
+        type: string
+      branch:
+        description: 'Branch name (for context)'
+        required: false
+        type: string
+        default: 'main'
+
+concurrency:
+  group: ${{ github.event.inputs.commit_sha }}
+  cancel-in-progress: true
+
+jobs:
+  public_demo:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --manifest-path examples/hello-arm64/Cargo.toml --quiet
+
+  private_glibc:
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      result: ${{ steps.test.outcome }}
+      failures: ${{ steps.test.outputs.failures }}
+    steps:
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_KEY }}
+
+      - name: Trust GitHub host key
+        run: ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
+
+      - name: Clone & checkout
+        run: |
+          git clone --depth 50 "$PRIVATE_REPO_URL" src
+          cd src && git checkout "${{ inputs.commit_sha }}"
+        env:
+          PRIVATE_REPO_URL: ${{ secrets.PRIVATE_REPO_URL }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src
+
+      - id: test
+        name: Run cargo test
+        working-directory: src
+        run: |
+          cargo test --workspace --quiet 2>&1 | tee /tmp/test.log
+          rc=${PIPESTATUS[0]}
+          sed -i "s|/home/runner/work/[^[:space:]]*|<WORK>|g" /tmp/test.log
+          if [ $rc -ne 0 ]; then
+            grep -E '^test .* FAILED' /tmp/test.log | head -20 > /tmp/failures.txt
+            tail -50 /tmp/test.log >> /tmp/failures.txt
+            {
+              echo "failures<<EOF_FAIL"
+              cat /tmp/failures.txt
+              echo "EOF_FAIL"
+            } >> "$GITHUB_OUTPUT"
+          fi
+          exit $rc
+
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-log-glibc-${{ inputs.commit_sha }}
+          path: /tmp/test.log
+          retention-days: 7
+
+  private_bionic:
+    runs-on: ubuntu-24.04-arm
+    container:
+      image: termux/termux-docker:aarch64
+    outputs:
+      result: ${{ steps.test.outcome }}
+      failures: ${{ steps.test.outputs.failures }}
+    steps:
+      - name: Install build deps in termux
+        run: |
+          pkg update -y
+          pkg install -y rust git openssh
+
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_KEY }}
+
+      - name: Trust GitHub host key
+        run: ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
+
+      - name: Clone & checkout
+        run: |
+          git clone --depth 50 "$PRIVATE_REPO_URL" src
+          cd src && git checkout "${{ inputs.commit_sha }}"
+        env:
+          PRIVATE_REPO_URL: ${{ secrets.PRIVATE_REPO_URL }}
+
+      - id: test
+        name: Run cargo test
+        working-directory: src
+        run: |
+          cargo test --workspace --quiet 2>&1 | tee /tmp/test.log
+          rc=${PIPESTATUS[0]}
+          sed -i "s|/data/data/com.termux/[^[:space:]]*|<WORK>|g" /tmp/test.log
+          if [ $rc -ne 0 ]; then
+            grep -E '^test .* FAILED' /tmp/test.log | head -20 > /tmp/failures.txt
+            tail -50 /tmp/test.log >> /tmp/failures.txt
+            {
+              echo "failures<<EOF_FAIL"
+              cat /tmp/failures.txt
+              echo "EOF_FAIL"
+            } >> "$GITHUB_OUTPUT"
+          fi
+          exit $rc
+
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-log-bionic-${{ inputs.commit_sha }}
+          path: /tmp/test.log
+          retention-days: 7
+
+  notify_failure:
+    needs: [private_glibc, private_bionic]
+    if: failure()
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Send Telegram alert
+        run: |
+          GLIBC="${{ needs.private_glibc.result }}"
+          BIONIC="${{ needs.private_bionic.result }}"
+          FAILS_GLIBC="${{ needs.private_glibc.outputs.failures }}"
+          FAILS_BIONIC="${{ needs.private_bionic.outputs.failures }}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          MSG=$(cat <<EOM
+          CI failed
+          branch: ${{ inputs.branch }}
+          sha:    ${{ inputs.commit_sha }}
+          glibc:  $GLIBC
+          bionic: $BIONIC
+
+          --- glibc failures ---
+          $FAILS_GLIBC
+
+          --- bionic failures ---
+          $FAILS_BIONIC
+
+          Run: $RUN_URL
+          EOM
+          )
+
+          if [ ${#MSG} -gt 4000 ]; then
+            MSG="${MSG:0:1800}"$'\n[... truncated ...]\n'"${MSG: -1800}"
+          fi
+
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            --data-urlencode "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+            --data-urlencode "text=$MSG" > /dev/null
