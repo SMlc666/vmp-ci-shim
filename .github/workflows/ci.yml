@@ -111,85 +111,62 @@ jobs:
         env:
           PRIVATE_REPO_URL: ${{ secrets.PRIVATE_REPO_URL }}
 
-      - name: Bootstrap termux bionic userland
+      - name: Cache bionic userland (full termux + /system + rust)
+        id: bionic-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/bionic-userland.tar
+          key: bionic-userland-v3-${{ hashFiles('.github/workflows/ci.yml') }}
+
+      - name: Extract bionic from termux-docker image (cache miss)
+        if: steps.bionic-cache.outputs.cache-hit != 'true'
         run: |
-          # Termux binaries hard-code /data/data/com.termux/files/ — must use this path
-          sudo mkdir -p "$TERMUX_PREFIX" "$TERMUX_HOME"
+          set -e
+          echo "=== docker pull termux ==="
+          docker pull termux/termux-docker:aarch64
+
+          echo "=== docker create + cp ==="
+          docker create --name termux-extract termux/termux-docker:aarch64 sleep infinity
+          sudo mkdir -p /data/data/com.termux
+          sudo docker cp termux-extract:/data/data/com.termux/files /data/data/com.termux/files
+          sudo docker cp termux-extract:/system /system
+          docker rm termux-extract
+
+          # Make termux tree owned by runner user (binaries still executable; uid doesn't matter for ELF exec)
+          sudo chown -R "$USER:$USER" /data/data/com.termux
+          # /system stays root-owned (it's just linker + lib symlinks; only need read access)
+
+          echo "=== sanity: bionic linker present ==="
+          ls -la /system/bin/linker64 /system/lib64
+          [ -e /system/bin/linker64 ] && echo "linker target EXISTS" || { echo "FAIL: linker missing"; exit 1; }
+
+          echo "=== sanity: apt --version (bionic exec) ==="
+          "$TERMUX_PREFIX/bin/apt" --version
+
+          echo "=== DNS test ==="
+          "$TERMUX_PREFIX/bin/curl" -sI --max-time 10 https://github.com | head -2
+
+          echo "=== install rust + git ==="
+          "$TERMUX_PREFIX/bin/apt" update -y 2>&1 | tail -8
+          "$TERMUX_PREFIX/bin/apt" install -y rust git 2>&1 | tail -5
+          "$TERMUX_PREFIX/bin/rustc" --version
+
+          echo "=== snapshot tarball ==="
+          sudo tar -cf /tmp/bionic-userland.tar /data/data/com.termux /system 2>/dev/null
+          ls -lh /tmp/bionic-userland.tar
+
+      - name: Restore bionic userland (cache hit)
+        if: steps.bionic-cache.outputs.cache-hit == 'true'
+        run: |
+          set -e
+          echo "=== restoring cached bionic tarball ==="
+          ls -lh /tmp/bionic-userland.tar
+          sudo tar -xf /tmp/bionic-userland.tar -C /
+          # Ensure runner user owns the termux tree post-extract
           sudo chown -R "$USER:$USER" /data/data/com.termux
 
-          # Latest bootstrap from termux-packages releases
-          BOOTSTRAP_URL=$(curl -fsSL https://api.github.com/repos/termux/termux-packages/releases/latest \
-            | python3 -c "import json,sys; r=json.load(sys.stdin); [print(a['browser_download_url']) for a in r['assets'] if 'bootstrap-aarch64' in a['name']]" \
-            | head -1)
-          echo "Bootstrap URL: $BOOTSTRAP_URL"
-
-          cd /tmp
-          curl -fsSL "$BOOTSTRAP_URL" -o bootstrap.zip
-          ls -lh bootstrap.zip
-
-          # Extract directly to $PREFIX
-          unzip -q bootstrap.zip -d "$TERMUX_PREFIX"
-
-          # Create symlinks listed in SYMLINKS.txt (termux uses ← as separator)
-          if [ -f "$TERMUX_PREFIX/SYMLINKS.txt" ]; then
-            cd "$TERMUX_PREFIX"
-            while IFS='←' read -r src dst; do
-              [ -n "$src" ] && [ -n "$dst" ] && ln -sf "$src" "$dst"
-            done < SYMLINKS.txt
-            rm SYMLINKS.txt
-            cd -
-          fi
-
-          echo "=== what's in lib (linker candidates)? ==="
-          ls "$TERMUX_PREFIX/lib/" | grep -iE "(linker|ld-|loader)" | head -10
-          echo "=== PT_INTERP of apt binary ==="
-          readelf -p .interp "$TERMUX_PREFIX/bin/apt" 2>&1 | head -5
-          echo "=== dynamic deps of apt ==="
-          readelf -d "$TERMUX_PREFIX/bin/apt" 2>&1 | grep NEEDED | head -10
-
-          # Create /system symlinks based on what we find
-          sudo mkdir -p /system/bin
-          sudo ln -sfn "$TERMUX_PREFIX/lib" /system/lib64
-
-          # Find the actual linker file
-          for cand in ld-android.so linker64 linker ld-linux-aarch64.so.1; do
-            if [ -f "$TERMUX_PREFIX/lib/$cand" ]; then
-              sudo ln -sfn "$TERMUX_PREFIX/lib/$cand" /system/bin/linker64
-              echo "Using linker: $cand"
-              break
-            fi
-          done
-
-          echo "=== verify symlinks ==="
-          ls -la /system/bin/linker64 /system/lib64
-          echo "=== readlink target check ==="
-          readlink -f /system/bin/linker64
-          [ -e /system/bin/linker64 ] && echo "linker64 target EXISTS" || echo "linker64 target MISSING"
-
-          echo "=== try apt --version ==="
-          "$TERMUX_PREFIX/bin/apt" --version 2>&1 || echo "(apt failed)"
-          echo "=== try invoking linker directly ==="
-          /system/bin/linker64 "$TERMUX_PREFIX/bin/apt" --version 2>&1 | head -5 || echo "(direct linker invocation also failed)"
-
-      - name: Install rust + git via termux apt
-        run: |
-          export PREFIX="$TERMUX_PREFIX"
-          export HOME="$TERMUX_HOME"
-          export PATH="$TERMUX_PREFIX/bin:$PATH"
-          export LD_LIBRARY_PATH="$TERMUX_PREFIX/lib"
-
-          # bionic resolver should use host's /etc/resolv.conf
-          echo "=== DNS test ==="
-          "$TERMUX_PREFIX/bin/curl" -sI --max-time 10 https://github.com | head -2 || { echo "FAIL: curl/DNS"; exit 1; }
-
-          echo "=== apt update ==="
-          "$TERMUX_PREFIX/bin/apt" update -y 2>&1 | tail -10
-
-          echo "=== apt install rust git ==="
-          "$TERMUX_PREFIX/bin/apt" install -y rust git 2>&1 | tail -10
-
-          echo "=== rustc version ==="
-          "$TERMUX_PREFIX/bin/rustc" --version
+          echo "=== sanity check ==="
+          "$TERMUX_PREFIX/bin/rustc" --version || { echo "FAIL: cached rust broken"; exit 1; }
 
       - id: test
         name: Run cargo test against bionic
