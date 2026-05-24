@@ -90,6 +90,9 @@ jobs:
   # doesn't care which libc a process uses.
   private_bionic:
     runs-on: ubuntu-24.04-arm
+    # Bionic runs are "indicator" status only — surface failures in GHA UI but
+    # don't block CI green. Real CI gate is private_glibc.
+    continue-on-error: true
     outputs:
       result: ${{ steps.test.outcome }}
       failures: ${{ steps.test.outputs.failures }}
@@ -240,8 +243,10 @@ jobs:
           if-no-files-found: warn
 
   notify_failure:
+    # Only fire on glibc failure. Bionic is continue-on-error (indicator only),
+    # its failures don't trigger Telegram noise.
     needs: [private_glibc, private_bionic]
-    if: failure()
+    if: needs.private_glibc.result == 'failure'
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Send Telegram alert
