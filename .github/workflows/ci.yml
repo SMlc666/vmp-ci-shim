@@ -158,6 +158,11 @@ jobs:
           mkdir -p "$TERMUX_PREFIX/etc/apt/apt.conf.d"
           printf '%s\n' 'Acquire::http::Proxy "http://127.0.0.1:3128/";' 'Acquire::https::Proxy "http://127.0.0.1:3128/";' > "$TERMUX_PREFIX/etc/apt/apt.conf.d/99proxy"
 
+          # Pre-create apt's cache dirs (termux init normally does this, but
+          # the docker-extracted tree doesn't carry runtime dirs).
+          mkdir -p /data/data/com.termux/cache/apt/archives/partial
+          mkdir -p /data/data/com.termux/cache/apt/lists/partial
+
           echo "=== apt update via proxy ==="
           "$TERMUX_PREFIX/bin/apt" update -y 2>&1 | tail -10
 
