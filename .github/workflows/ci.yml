@@ -90,7 +90,7 @@ jobs:
       # --dns 8.8.8.8 bypasses termux container's broken default resolv.conf.
       # No webfactory/ssh-agent / upload-artifact actions used in this job
       # because termux image lacks /__e/node20/bin/node, breaking JS actions.
-      options: --user 1000:1000 --dns 8.8.8.8 --dns 1.1.1.1
+      options: --user 1000:1000 --network host
     outputs:
       result: ${{ steps.test.outcome }}
       failures: ${{ steps.test.outputs.failures }}
