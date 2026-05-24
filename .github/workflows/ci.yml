@@ -117,20 +117,7 @@ jobs:
         # any termux apt/cargo network activity, regardless of cache hit/miss.
         run: |
           sudo apt-get install -y tinyproxy >/dev/null
-          sudo bash -c 'cat > /etc/tinyproxy/tinyproxy.conf' <<'PROXY'
-User tinyproxy
-Group tinyproxy
-Port 3128
-Listen 127.0.0.1
-Timeout 600
-LogLevel Warning
-PidFile "/run/tinyproxy/tinyproxy.pid"
-MaxClients 100
-Allow 127.0.0.1
-ConnectPort 443
-ConnectPort 80
-DisableViaHeader Yes
-PROXY
+          sudo bash -c 'printf "%s\n" "User tinyproxy" "Group tinyproxy" "Port 3128" "Listen 127.0.0.1" "Timeout 600" "LogLevel Warning" "PidFile \"/run/tinyproxy/tinyproxy.pid\"" "MaxClients 100" "Allow 127.0.0.1" "ConnectPort 443" "ConnectPort 80" "DisableViaHeader Yes" > /etc/tinyproxy/tinyproxy.conf'
           sudo systemctl restart tinyproxy
           sudo systemctl is-active tinyproxy
           curl -sI --max-time 10 -x http://127.0.0.1:3128 https://github.com | head -2
@@ -169,10 +156,7 @@ PROXY
 
           # Configure termux apt to use the host-side proxy (started in earlier step).
           mkdir -p "$TERMUX_PREFIX/etc/apt/apt.conf.d"
-          cat > "$TERMUX_PREFIX/etc/apt/apt.conf.d/99proxy" <<'EOAPT'
-Acquire::http::Proxy "http://127.0.0.1:3128/";
-Acquire::https::Proxy "http://127.0.0.1:3128/";
-EOAPT
+          printf '%s\n' 'Acquire::http::Proxy "http://127.0.0.1:3128/";' 'Acquire::https::Proxy "http://127.0.0.1:3128/";' > "$TERMUX_PREFIX/etc/apt/apt.conf.d/99proxy"
 
           echo "=== apt update via proxy ==="
           "$TERMUX_PREFIX/bin/apt" update -y 2>&1 | tail -10
