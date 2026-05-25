@@ -101,7 +101,7 @@ jobs:
       TERMUX_HOME: /data/data/com.termux/files/home
       # Pre-baked image with rust + git pre-installed. Bump the tag when
       # the Dockerfile changes (and rebuild via build-bionic-image.yml).
-      BIONIC_IMAGE: ghcr.io/smlc666/termux-rust:v1
+      BIONIC_IMAGE: ghcr.io/smlc666/termux-rust:v2
     steps:
       - uses: webfactory/ssh-agent@v0.9.0
         with:
@@ -135,7 +135,7 @@ jobs:
           path: /tmp/bionic-userland.tar
           # Cache key is tied to the image tag only — ci.yml edits no longer
           # invalidate. Bump BIONIC_IMAGE tag → bump cache key string here.
-          key: bionic-userland-v5-image-v1
+          key: bionic-userland-v5-image-v2
 
       - name: Log in to ghcr.io
         if: steps.bionic-cache.outputs.cache-hit != 'true'
@@ -178,7 +178,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: /tmp/bionic-userland.tar
-          key: bionic-userland-v5-image-v1
+          key: bionic-userland-v5-image-v2
 
       - name: Restore bionic userland (cache hit)
         if: steps.bionic-cache.outputs.cache-hit == 'true'
@@ -228,6 +228,13 @@ jobs:
           # cache-restored target, and lets CARGO_TARGET_DIR alone control
           # cache contents.
           export CARGO_TARGET_DIR="$TERMUX_HOME/target"
+
+          # Real-lib suite e2e (libsqlite): enable the CI-only test and point it
+          # at the SQLite 3.45.3 amalgamation baked into the image (extracted
+          # under $TERMUX_PREFIX). Docker ENV is NOT inherited by this
+          # extract-and-run model, so SQLITE_SRC_DIR must be exported here.
+          export VMP_REALIB_E2E=1
+          export SQLITE_SRC_DIR="$TERMUX_PREFIX/realib-sqlite/sqlite-amalgamation-3450300"
 
           cp -r src "$TERMUX_HOME/src"
           # vmp-lifter's e2e tests resolve vmp-runner via env!("CARGO_MANIFEST_DIR")/../target/<profile>/vmp-runner
