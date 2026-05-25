@@ -311,10 +311,14 @@ jobs:
           "$PREFIX/bin/cargo" run -q -p vmp-lifter -- protect --input "$SO" --output "$SODIR/libsqlite3.so" \
             --funcs sqlite3_libversion,sqlite3_libversion_number,sqlite3_threadsafe --seed 66 2>&1 | tail -6 || echo "PROTECT-FAILED"
           echo "=== build libtclsqlite3.so against EXTERNAL protected libsqlite3.so ==="
-          clang -shared -fPIC -DUSE_TCL_STUBS=0 \
+          # Loadable Tcl extensions MUST use the stubs mechanism: build with
+          # USE_TCL_STUBS=1 and link the static stub lib (provides tclStubsPtr,
+          # populated at load via Tcl_InitStubs from the host interp). Linking
+          # -ltcl8.6 directly fails at dlopen with "cannot locate tclStubsPtr".
+          clang -shared -fPIC -DUSE_TCL_STUBS=1 \
             -I"$PREFIX/include" -I"$SQLITE_SRC_DIR" -I"$FULLSRC" \
             "$FULLSRC/src/tclsqlite.c" -o /tmp/libtclsqlite3.so \
-            -L"$SODIR" -lsqlite3 -L"$PREFIX/lib" -ltcl8.6 -ldl 2>&1 | tail -15 || echo "B-BUILD-FAILED"
+            -L"$SODIR" -lsqlite3 "$PREFIX/lib/libtclstub8.6.a" -ldl 2>&1 | tail -15 || echo "B-BUILD-FAILED"
           ls -l /tmp/libtclsqlite3.so 2>&1 || echo "NO libtclsqlite3.so"
           echo "=== ldd: is the tcl ext bound to OUR external .so? ==="
           LD_LIBRARY_PATH="$SODIR:$PREFIX/lib" ldd /tmp/libtclsqlite3.so 2>&1 | grep -i sqlite || echo "(no sqlite in ldd)"
