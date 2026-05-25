@@ -12,6 +12,11 @@ on:
         required: false
         type: string
         default: 'main'
+      oracle_litmus:
+        description: 'Run the Cat 2B differential-oracle litmus on bionic'
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.event.inputs.commit_sha }}
@@ -291,6 +296,31 @@ jobs:
           export SQLITE_SRC_DIR="$TERMUX_PREFIX/realib-sqlite/sqlite-amalgamation-3450300"
           cd "$TERMUX_HOME/src"
           "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_sqlite_e2e -- --nocapture
+
+      - name: Oracle Cat 2B litmus (bionic)
+        # Proof the three-way differential oracle auto-classifies mba_smoke as
+        # NATIVE-EXEC (bytecode correct, native VM crashes) on bionic — the
+        # diagnosis that took multiple sessions by hand, now one automated run.
+        # Gated on the oracle_litmus dispatch input so normal/hook-triggered
+        # runs skip it (the test self-skips when VMP_ORACLE_LITMUS != 1). NOT
+        # continue-on-error: this step passing IS the proof the oracle works.
+        if: ${{ always() && inputs.oracle_litmus }}
+        run: |
+          export PREFIX="$TERMUX_PREFIX"
+          export HOME="$TERMUX_HOME"
+          export PATH="$TERMUX_PREFIX/bin:$PATH"
+          export LD_LIBRARY_PATH="$TERMUX_PREFIX/lib"
+          export HTTPS_PROXY=http://127.0.0.1:3128
+          export HTTP_PROXY=http://127.0.0.1:3128
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TERMUX_PREFIX/bin/clang"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_AR="$TERMUX_PREFIX/bin/llvm-ar"
+          export CARGO_TARGET_DIR="$TERMUX_HOME/target"
+          # Gate ON + compile mba_smoke.c with bionic clang (matches the
+          # confirmed local repro recipe).
+          export VMP_ORACLE_LITMUS=1
+          export CC="$TERMUX_PREFIX/bin/clang"
+          cd "$TERMUX_HOME/src"
+          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test oracle_litmus -- --nocapture
 
       - name: Save cargo cache (bionic)
         # if: always() — save even when cargo test fails (87 e2e are known
