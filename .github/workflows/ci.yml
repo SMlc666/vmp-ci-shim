@@ -282,6 +282,35 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
+      # Cat 2B diagnostic (2026-05-25): upload the per-test e2e fixture
+      # outputs (orig.so + protected.so + packed.so) so we can compare
+      # bionic-host lifter output against local glibc-host lifter output
+      # offline. Lets us locate the source of `x16 = 0x12` writes and
+      # other host-determinism bugs without needing a bionic debugger.
+      # Tarball-only to keep artifact file count low; the dir tree has
+      # ~150 sub-dirs.
+      - name: Package bionic e2e fixture outputs
+        if: failure()
+        shell: bash
+        run: |
+          set -e
+          E2E_DIR=/data/data/com.termux/files/home/src/vmp-lifter/fixtures/e2e
+          if [ -d "$E2E_DIR" ]; then
+            cd /data/data/com.termux/files/home/src/vmp-lifter/fixtures
+            tar czf /tmp/e2e-fixtures-bionic.tar.gz e2e/
+            ls -lh /tmp/e2e-fixtures-bionic.tar.gz
+          else
+            echo "[diagnostic] e2e fixtures dir not present (no tests reached file-emit stage)" >&2
+          fi
+
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-fixtures-bionic-${{ inputs.commit_sha }}
+          path: /tmp/e2e-fixtures-bionic.tar.gz
+          retention-days: 7
+          if-no-files-found: warn
+
   notify_failure:
     # Fire on glibc OR bionic failure.
     # NOTE: continue-on-error: true at JOB level MASKS needs.<job>.result
