@@ -292,46 +292,6 @@ jobs:
           cd "$TERMUX_HOME/src"
           "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_sqlite_e2e -- --nocapture
 
-      - name: realib spike mechanism-B (R1) [temp]
-        if: always()
-        continue-on-error: true
-        run: |
-          export PREFIX="$TERMUX_PREFIX"; export HOME="$TERMUX_HOME"
-          export PATH="$TERMUX_PREFIX/bin:$PATH"
-          export LD_LIBRARY_PATH="$TERMUX_PREFIX/lib"
-          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TERMUX_PREFIX/bin/clang"
-          export CARGO_TARGET_DIR="$TERMUX_HOME/target"
-          export SQLITE_SRC_DIR="$TERMUX_PREFIX/realib-sqlite/sqlite-amalgamation-3450300"
-          FULLSRC="$TERMUX_PREFIX/realib-sqlite/sqlite-src-3450300"
-          cd "$TERMUX_HOME/src"
-          SO="$PWD/tests/realib_fixtures/sqlite/build/libsqlite3.so"
-          SODIR="$(dirname "$SO")"
-          [ -f "$SO" ] || bash tests/realib_fixtures/sqlite/build.sh
-          echo "=== protect simple exports in-place (so -lsqlite3 picks the protected one) ==="
-          "$PREFIX/bin/cargo" run -q -p vmp-lifter -- protect --input "$SO" --output "$SODIR/libsqlite3.so" \
-            --funcs sqlite3_libversion,sqlite3_libversion_number,sqlite3_threadsafe --seed 66 2>&1 | tail -6 || echo "PROTECT-FAILED"
-          echo "=== build libtclsqlite3.so against EXTERNAL protected libsqlite3.so ==="
-          # Loadable Tcl extensions MUST use the stubs mechanism: build with
-          # USE_TCL_STUBS=1 and link the static stub lib (provides tclStubsPtr,
-          # populated at load via Tcl_InitStubs from the host interp). Linking
-          # -ltcl8.6 directly fails at dlopen with "cannot locate tclStubsPtr".
-          clang -shared -fPIC -DUSE_TCL_STUBS=1 \
-            -I"$PREFIX/include" -I"$SQLITE_SRC_DIR" -I"$FULLSRC" \
-            "$FULLSRC/src/tclsqlite.c" -o /tmp/libtclsqlite3.so \
-            -L"$SODIR" -lsqlite3 "$PREFIX/lib/libtclstub8.6.a" -ldl 2>&1 | tail -15 || echo "B-BUILD-FAILED"
-          ls -l /tmp/libtclsqlite3.so 2>&1 || echo "NO libtclsqlite3.so"
-          echo "=== ldd: is the tcl ext bound to OUR external .so? ==="
-          LD_LIBRARY_PATH="$SODIR:$PREFIX/lib" ldd /tmp/libtclsqlite3.so 2>&1 | grep -i sqlite || echo "(no sqlite in ldd)"
-          echo "=== run real SQL via tclsh, backed by the external protected .so ==="
-          printf '%s\n' \
-            'load /tmp/libtclsqlite3.so Sqlite3' \
-            'sqlite3 db :memory:' \
-            'db eval {create table t(x); insert into t values(42);}' \
-            'puts "VER=[db version] ROW=[db eval {select x from t}]"' \
-            'db close' > /tmp/probe.tcl
-          LD_LIBRARY_PATH="$SODIR:$PREFIX/lib" "$PREFIX/bin/tclsh" /tmp/probe.tcl 2>&1; echo "B-RUN-EXIT=$?"
-          echo "=== spike mechanism-B done ==="
-
       - name: Save cargo cache (bionic)
         # if: always() — save even when cargo test fails (87 e2e are known
         # noise; we still want the compile artifacts cached). Skip when
