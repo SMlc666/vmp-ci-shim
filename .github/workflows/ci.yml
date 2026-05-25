@@ -292,33 +292,6 @@ jobs:
           cd "$TERMUX_HOME/src"
           "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_sqlite_e2e -- --nocapture
 
-      - name: realib suite spike Phase A [temp]
-        if: always()
-        continue-on-error: true
-        run: |
-          export PREFIX="$TERMUX_PREFIX"; export HOME="$TERMUX_HOME"
-          export PATH="$TERMUX_PREFIX/bin:$PATH"
-          export LD_LIBRARY_PATH="$TERMUX_PREFIX/lib"
-          export SQLITE_SRC_DIR="$TERMUX_PREFIX/realib-sqlite/sqlite-amalgamation-3450300"
-          FULLSRC="$TERMUX_PREFIX/realib-sqlite/sqlite-src-3450300"
-          cd "$TERMUX_HOME/src"
-          SO="$PWD/tests/realib_fixtures/sqlite/build/libsqlite3.so"; SODIR="$(dirname "$SO")"
-          [ -f "$SO" ] || bash tests/realib_fixtures/sqlite/build.sh
-          echo "=== A1: can tester.tcl run select1.test under the mechanism-B ext? ==="
-          clang -shared -fPIC -DUSE_TCL_STUBS=1 -I"$PREFIX/include" -I"$SQLITE_SRC_DIR" -I"$FULLSRC" \
-            "$FULLSRC/src/tclsqlite.c" -o /tmp/libtclsqlite3.so \
-            -L"$SODIR" -lsqlite3 "$PREFIX/lib/libtclstub8.6.a" -ldl 2>&1 | tail -5 || echo "ext-build-fail"
-          printf '%s\n' 'load /tmp/libtclsqlite3.so Sqlite3' 'set argv0 [file join [pwd] select1.test]' 'set argv {}' 'source select1.test' > /tmp/run_one.tcl
-          ( cd "$FULLSRC/test" && LD_LIBRARY_PATH="$SODIR:$PREFIX/lib" "$PREFIX/bin/tclsh" /tmp/run_one.tcl ) 2>&1 | head -45
-          echo "A1-DONE"
-          echo "=== A2: build testfixture (test1.c) linking EXTERNAL .so, no sqlite3.c ==="
-          cd "$FULLSRC"
-          clang -DSQLITE_TEST=1 -DSQLITE_CORE -DUSE_TCL_STUBS=1 -I. -I"$SQLITE_SRC_DIR" -I"$PREFIX/include" \
-            src/test1.c src/tclsqlite.c -o /tmp/testfixture \
-            -L"$SODIR" -lsqlite3 "$PREFIX/lib/libtclstub8.6.a" -lm -ldl 2>&1 | grep -iE "fatal|undefined|sqliteInt|file not found|error:" | head -30
-          echo "A2-BUILD-EXIT=${PIPESTATUS[0]}; tf=$(ls -l /tmp/testfixture 2>&1 | head -1)"
-          echo "=== spike Phase A done ==="
-
       - name: Save cargo cache (bionic)
         # if: always() — save even when cargo test fails (87 e2e are known
         # noise; we still want the compile artifacts cached). Skip when
