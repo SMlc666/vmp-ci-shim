@@ -229,13 +229,6 @@ jobs:
           # cache contents.
           export CARGO_TARGET_DIR="$TERMUX_HOME/target"
 
-          # Real-lib suite e2e (libsqlite): enable the CI-only test and point it
-          # at the SQLite 3.45.3 amalgamation baked into the image (extracted
-          # under $TERMUX_PREFIX). Docker ENV is NOT inherited by this
-          # extract-and-run model, so SQLITE_SRC_DIR must be exported here.
-          export VMP_REALIB_E2E=1
-          export SQLITE_SRC_DIR="$TERMUX_PREFIX/realib-sqlite/sqlite-amalgamation-3450300"
-
           cp -r src "$TERMUX_HOME/src"
           # vmp-lifter's e2e tests resolve vmp-runner via env!("CARGO_MANIFEST_DIR")/../target/<profile>/vmp-runner
           # — a compile-time-baked relative path. With CARGO_TARGET_DIR pointing
@@ -272,6 +265,32 @@ jobs:
             } >> "$GITHUB_OUTPUT"
           fi
           exit $rc
+
+      - name: Real-lib suite e2e (libsqlite, bionic)
+        # The main --workspace run bails fast on the lib binary's known Cat 2B
+        # failures, so the integration binary never runs there. Run it
+        # standalone (already compiled above). if: always() because the main
+        # test step exits non-zero; continue-on-error keeps it an indicator
+        # like the rest of the bionic job.
+        if: always()
+        continue-on-error: true
+        run: |
+          export PREFIX="$TERMUX_PREFIX"
+          export HOME="$TERMUX_HOME"
+          export PATH="$TERMUX_PREFIX/bin:$PATH"
+          export LD_LIBRARY_PATH="$TERMUX_PREFIX/lib"
+          export HTTPS_PROXY=http://127.0.0.1:3128
+          export HTTP_PROXY=http://127.0.0.1:3128
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TERMUX_PREFIX/bin/clang"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_AR="$TERMUX_PREFIX/bin/llvm-ar"
+          export CARGO_TARGET_DIR="$TERMUX_HOME/target"
+          # Real-lib suite e2e (libsqlite): SQLite amalgamation baked into the
+          # image under $TERMUX_PREFIX (Docker ENV isn't inherited by the
+          # extract-and-run model, so SQLITE_SRC_DIR is set here).
+          export VMP_REALIB_E2E=1
+          export SQLITE_SRC_DIR="$TERMUX_PREFIX/realib-sqlite/sqlite-amalgamation-3450300"
+          cd "$TERMUX_HOME/src"
+          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_sqlite_e2e -- --nocapture
 
       - name: Save cargo cache (bionic)
         # if: always() — save even when cargo test fails (87 e2e are known
