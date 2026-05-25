@@ -292,7 +292,7 @@ jobs:
           cd "$TERMUX_HOME/src"
           "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_sqlite_e2e -- --nocapture
 
-      - name: realib spike recon (R1/R3) [temp]
+      - name: realib spike mechanism-B (R1) [temp]
         if: always()
         continue-on-error: true
         run: |
@@ -300,32 +300,33 @@ jobs:
           export PATH="$TERMUX_PREFIX/bin:$PATH"
           export LD_LIBRARY_PATH="$TERMUX_PREFIX/lib"
           export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TERMUX_PREFIX/bin/clang"
-          export CARGO_TARGET_AARCH64_LINUX_ANDROID_AR="$TERMUX_PREFIX/bin/llvm-ar"
           export CARGO_TARGET_DIR="$TERMUX_HOME/target"
           export SQLITE_SRC_DIR="$TERMUX_PREFIX/realib-sqlite/sqlite-amalgamation-3450300"
           FULLSRC="$TERMUX_PREFIX/realib-sqlite/sqlite-src-3450300"
           cd "$TERMUX_HOME/src"
           SO="$PWD/tests/realib_fixtures/sqlite/build/libsqlite3.so"
-          echo "=== RECON: tcl + sqlite full-src ==="
-          ls -l "$PREFIX/include/tcl.h" 2>&1 || echo "NO tcl.h"
-          ls -l "$PREFIX"/lib/libtcl* 2>&1 || echo "NO libtcl"
-          printf 'puts "tclver=[info patchlevel]"\n' | "$PREFIX/bin/tclsh" 2>&1 || echo "tclsh-run-fail"
-          ls -l "$FULLSRC/src/tclsqlite.c" 2>&1 || echo "NO tclsqlite.c"
-          ls "$FULLSRC"/test/*.test 2>/dev/null | head -3 || echo "NO .test scripts"
-          echo "=== build unprotected .so (if missing) ==="
+          SODIR="$(dirname "$SO")"
           [ -f "$SO" ] || bash tests/realib_fixtures/sqlite/build.sh
-          ls -l "$SO"
-          echo "=== protect sqlite3_libversion_number (protect-only) ==="
-          "$PREFIX/bin/cargo" run -q -p vmp-lifter -- protect --input "$SO" --output /tmp/p.so --funcs sqlite3_libversion_number --seed 66 2>&1 | tail -25 || echo "PROTECT-FAILED rc=$?"
-          ls -l /tmp/p.so 2>&1 || echo "NO p.so"
-          echo "=== R3: dynsym export diff orig vs protected ==="
-          "$PREFIX/bin/readelf" --dyn-syms "$SO"    2>/dev/null | awk '{print $8}' | sort -u > /tmp/s_o.txt
-          "$PREFIX/bin/readelf" --dyn-syms /tmp/p.so 2>/dev/null | awk '{print $8}' | sort -u > /tmp/s_p.txt
-          if diff /tmp/s_o.txt /tmp/s_p.txt; then echo "EXPORTS-IDENTICAL (count=$(wc -l < /tmp/s_o.txt))"; else echo "EXPORTS-DIFFER"; fi
-          echo "=== protected dlopen smoke (crash=Cat2B signal, not failure) ==="
-          clang tests/realib_fixtures/sqlite/smoke_runner.c -o /tmp/sr -ldl 2>&1 || echo "runner-build-fail"
-          /tmp/sr /tmp/p.so; echo "PROTECTED-SMOKE-EXIT=$?"
-          echo "=== spike recon done ==="
+          echo "=== protect simple exports in-place (so -lsqlite3 picks the protected one) ==="
+          "$PREFIX/bin/cargo" run -q -p vmp-lifter -- protect --input "$SO" --output "$SODIR/libsqlite3.so" \
+            --funcs sqlite3_libversion,sqlite3_libversion_number,sqlite3_threadsafe --seed 66 2>&1 | tail -6 || echo "PROTECT-FAILED"
+          echo "=== build libtclsqlite3.so against EXTERNAL protected libsqlite3.so ==="
+          clang -shared -fPIC -DUSE_TCL_STUBS=0 \
+            -I"$PREFIX/include" -I"$SQLITE_SRC_DIR" -I"$FULLSRC" \
+            "$FULLSRC/src/tclsqlite.c" -o /tmp/libtclsqlite3.so \
+            -L"$SODIR" -lsqlite3 -L"$PREFIX/lib" -ltcl8.6 -ldl 2>&1 | tail -15 || echo "B-BUILD-FAILED"
+          ls -l /tmp/libtclsqlite3.so 2>&1 || echo "NO libtclsqlite3.so"
+          echo "=== ldd: is the tcl ext bound to OUR external .so? ==="
+          LD_LIBRARY_PATH="$SODIR:$PREFIX/lib" ldd /tmp/libtclsqlite3.so 2>&1 | grep -i sqlite || echo "(no sqlite in ldd)"
+          echo "=== run real SQL via tclsh, backed by the external protected .so ==="
+          printf '%s\n' \
+            'load /tmp/libtclsqlite3.so Sqlite3' \
+            'sqlite3 db :memory:' \
+            'db eval {create table t(x); insert into t values(42);}' \
+            'puts "VER=[db version] ROW=[db eval {select x from t}]"' \
+            'db close' > /tmp/probe.tcl
+          LD_LIBRARY_PATH="$SODIR:$PREFIX/lib" "$PREFIX/bin/tclsh" /tmp/probe.tcl 2>&1; echo "B-RUN-EXIT=$?"
+          echo "=== spike mechanism-B done ==="
 
       - name: Save cargo cache (bionic)
         # if: always() — save even when cargo test fails (87 e2e are known
