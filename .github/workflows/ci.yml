@@ -292,6 +292,36 @@ jobs:
           cd "$TERMUX_HOME/src"
           "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_sqlite_e2e -- --nocapture
 
+      - name: realib battery spike (B/C) [temp]
+        if: always()
+        continue-on-error: true
+        run: |
+          export PREFIX="$TERMUX_PREFIX"; export HOME="$TERMUX_HOME"
+          export PATH="$TERMUX_PREFIX/bin:$PATH"
+          export LD_LIBRARY_PATH="$TERMUX_PREFIX/lib"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TERMUX_PREFIX/bin/clang"
+          export CARGO_TARGET_DIR="$TERMUX_HOME/target"
+          export SQLITE_SRC_DIR="$TERMUX_PREFIX/realib-sqlite/sqlite-amalgamation-3450300"
+          cd "$TERMUX_HOME/src"
+          bash tests/realib_fixtures/sqlite/build.sh
+          cp tests/realib_fixtures/sqlite/build/libsqlite3.so /tmp/unprot.so
+          clang tests/realib_fixtures/sqlite/sql_battery.c -o /tmp/battery -ldl 2>&1 | tail -5 || echo "battery-build-fail"
+          echo "=== BASELINE (unprotected) ==="
+          /tmp/battery /tmp/unprot.so | tee /tmp/base.txt; echo "BASE-EXIT=${PIPESTATUS[0]}"
+          echo "=== protect hot set ==="
+          "$PREFIX/bin/cargo" run -q -p vmp-lifter -- protect --input /tmp/unprot.so --output /tmp/prot.so \
+            --funcs sqlite3_open_v2,sqlite3_exec,sqlite3_prepare_v2,sqlite3_step,sqlite3_column_int,sqlite3_column_text,sqlite3_column_count,sqlite3_finalize,sqlite3_close,sqlite3_errmsg \
+            --seed 66 2>&1 | tail -8 || echo "PROTECT-FAILED"
+          ls -l /tmp/prot.so 2>&1 || echo "NO prot.so"
+          echo "=== PROTECTED battery (crash/regress = Cat2B signal) ==="
+          /tmp/battery /tmp/prot.so | tee /tmp/prot.txt; echo "PROT-EXIT=${PIPESTATUS[0]}"
+          echo "=== REGRESSIONS (PASS unprotected -> lost when protected) ==="
+          grep '^PASS:' /tmp/base.txt | sort > /tmp/bp.txt || true
+          grep '^PASS:' /tmp/prot.txt | sort > /tmp/pp.txt || true
+          echo "baseline_pass=$(wc -l < /tmp/bp.txt) protected_pass=$(wc -l < /tmp/pp.txt)"
+          echo "regressed:"; comm -23 /tmp/bp.txt /tmp/pp.txt
+          echo "=== battery spike done ==="
+
       - name: Save cargo cache (bionic)
         # if: always() — save even when cargo test fails (87 e2e are known
         # noise; we still want the compile artifacts cached). Skip when
