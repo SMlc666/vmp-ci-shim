@@ -239,6 +239,11 @@ jobs:
           ln -sfn "$TERMUX_HOME/target" "$TERMUX_HOME/src/target"
           cd "$TERMUX_HOME/src"
 
+          # Cat 2B phase-bisect (2026-05-25): VMP_PHASE_SHA=1 prints SHA-256
+          # of in-memory state after each pipeline phase. Diff against
+          # glibc-host SHAs to locate which phase introduces host
+          # non-determinism. Remove this env var once Cat 2B is resolved.
+          export VMP_PHASE_SHA=1
           "$TERMUX_PREFIX/bin/cargo" test --workspace --quiet -- \
             --skip byte_identical \
             --skip _ndk_ \
