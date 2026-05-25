@@ -292,6 +292,41 @@ jobs:
           cd "$TERMUX_HOME/src"
           "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_sqlite_e2e -- --nocapture
 
+      - name: realib spike recon (R1/R3) [temp]
+        if: always()
+        continue-on-error: true
+        run: |
+          export PREFIX="$TERMUX_PREFIX"; export HOME="$TERMUX_HOME"
+          export PATH="$TERMUX_PREFIX/bin:$PATH"
+          export LD_LIBRARY_PATH="$TERMUX_PREFIX/lib"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TERMUX_PREFIX/bin/clang"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_AR="$TERMUX_PREFIX/bin/llvm-ar"
+          export CARGO_TARGET_DIR="$TERMUX_HOME/target"
+          export SQLITE_SRC_DIR="$TERMUX_PREFIX/realib-sqlite/sqlite-amalgamation-3450300"
+          FULLSRC="$TERMUX_PREFIX/realib-sqlite/sqlite-src-3450300"
+          cd "$TERMUX_HOME/src"
+          SO="$PWD/tests/realib_fixtures/sqlite/build/libsqlite3.so"
+          echo "=== RECON: tcl + sqlite full-src ==="
+          ls -l "$PREFIX/include/tcl.h" 2>&1 || echo "NO tcl.h"
+          ls -l "$PREFIX"/lib/libtcl* 2>&1 || echo "NO libtcl"
+          printf 'puts "tclver=[info patchlevel]"\n' | "$PREFIX/bin/tclsh" 2>&1 || echo "tclsh-run-fail"
+          ls -l "$FULLSRC/src/tclsqlite.c" 2>&1 || echo "NO tclsqlite.c"
+          ls "$FULLSRC"/test/*.test 2>/dev/null | head -3 || echo "NO .test scripts"
+          echo "=== build unprotected .so (if missing) ==="
+          [ -f "$SO" ] || bash tests/realib_fixtures/sqlite/build.sh
+          ls -l "$SO"
+          echo "=== protect sqlite3_libversion_number (protect-only) ==="
+          "$PREFIX/bin/cargo" run -q -p vmp-lifter -- protect --input "$SO" --output /tmp/p.so --funcs sqlite3_libversion_number --seed 66 2>&1 | tail -25 || echo "PROTECT-FAILED rc=$?"
+          ls -l /tmp/p.so 2>&1 || echo "NO p.so"
+          echo "=== R3: dynsym export diff orig vs protected ==="
+          "$PREFIX/bin/readelf" --dyn-syms "$SO"    2>/dev/null | awk '{print $8}' | sort -u > /tmp/s_o.txt
+          "$PREFIX/bin/readelf" --dyn-syms /tmp/p.so 2>/dev/null | awk '{print $8}' | sort -u > /tmp/s_p.txt
+          if diff /tmp/s_o.txt /tmp/s_p.txt; then echo "EXPORTS-IDENTICAL (count=$(wc -l < /tmp/s_o.txt))"; else echo "EXPORTS-DIFFER"; fi
+          echo "=== protected dlopen smoke (crash=Cat2B signal, not failure) ==="
+          clang tests/realib_fixtures/sqlite/smoke_runner.c -o /tmp/sr -ldl 2>&1 || echo "runner-build-fail"
+          /tmp/sr /tmp/p.so; echo "PROTECTED-SMOKE-EXIT=$?"
+          echo "=== spike recon done ==="
+
       - name: Save cargo cache (bionic)
         # if: always() — save even when cargo test fails (87 e2e are known
         # noise; we still want the compile artifacts cached). Skip when
