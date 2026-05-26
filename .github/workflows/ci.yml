@@ -106,7 +106,7 @@ jobs:
       TERMUX_HOME: /data/data/com.termux/files/home
       # Pre-baked image with rust + git pre-installed. Bump the tag when
       # the Dockerfile changes (and rebuild via build-bionic-image.yml).
-      BIONIC_IMAGE: ghcr.io/smlc666/termux-rust:v2
+      BIONIC_IMAGE: ghcr.io/smlc666/termux-rust:v3
     steps:
       - uses: webfactory/ssh-agent@v0.9.0
         with:
@@ -140,7 +140,7 @@ jobs:
           path: /tmp/bionic-userland.tar
           # Cache key is tied to the image tag only — ci.yml edits no longer
           # invalidate. Bump BIONIC_IMAGE tag → bump cache key string here.
-          key: bionic-userland-v5-image-v2
+          key: bionic-userland-v5-image-v3
 
       - name: Log in to ghcr.io
         if: steps.bionic-cache.outputs.cache-hit != 'true'
@@ -183,7 +183,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: /tmp/bionic-userland.tar
-          key: bionic-userland-v5-image-v2
+          key: bionic-userland-v5-image-v3
 
       - name: Restore bionic userland (cache hit)
         if: steps.bionic-cache.outputs.cache-hit == 'true'
@@ -271,7 +271,7 @@ jobs:
           fi
           exit $rc
 
-      - name: Real-lib suite e2e (libsqlite, bionic)
+      - name: Real-lib suite e2e (libsqlite + libcrypto, bionic)
         # The main --workspace run bails fast on the lib binary's known Cat 2B
         # failures, so the integration binary never runs there. Run it
         # standalone (already compiled above). if: always() because the main
@@ -295,7 +295,12 @@ jobs:
           export VMP_REALIB_E2E=1
           export SQLITE_SRC_DIR="$TERMUX_PREFIX/realib-sqlite/sqlite-amalgamation-3450300"
           cd "$TERMUX_HOME/src"
-          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_sqlite_e2e -- --nocapture
+          # `|| true`: each adapter is an independent indicator; a failing one
+          # (e.g. surfaced Cat 2B) must not abort the step before the next runs.
+          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_sqlite_e2e -- --nocapture || true
+          # libcrypto suite-e2e: OpenSSL 1.1.1w pre-built into the image under
+          # $TERMUX_PREFIX/realib-openssl (PREFIX exported above; build.sh finds it).
+          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_libcrypto_e2e -- --nocapture || true
 
       - name: Oracle Cat 2B litmus (bionic)
         # Proof the three-way differential oracle auto-classifies mba_smoke as
