@@ -21,7 +21,7 @@ RUN PREFIX=/data/data/com.termux/files/usr && \
     mkdir -p /data/data/com.termux/cache/apt/archives/partial && \
     mkdir -p /data/data/com.termux/cache/apt/lists/partial && \
     "$PREFIX/bin/apt" update -y && \
-    "$PREFIX/bin/apt" install -y rust git tcl curl unzip && \
+    "$PREFIX/bin/apt" install -y rust git tcl curl unzip perl make clang tar && \
     mkdir -p "$PREFIX/realib-sqlite" && cd "$PREFIX/realib-sqlite" && \
     "$PREFIX/bin/curl" -fSL -x "$BUILD_PROXY" -o amalg.zip \
       "https://www.sqlite.org/2024/sqlite-amalgamation-3450300.zip" && \
@@ -29,9 +29,18 @@ RUN PREFIX=/data/data/com.termux/files/usr && \
       "https://www.sqlite.org/2024/sqlite-src-3450300.zip" && \
     "$PREFIX/bin/unzip" -oq amalg.zip && "$PREFIX/bin/unzip" -oq src.zip && \
     rm -f amalg.zip src.zip && \
+    mkdir -p "$PREFIX/realib-openssl" && cd "$PREFIX/realib-openssl" && \
+    "$PREFIX/bin/curl" -fSL -x "$BUILD_PROXY" -o openssl.tar.gz \
+      "https://www.openssl.org/source/openssl-1.1.1w.tar.gz" && \
+    tar xzf openssl.tar.gz && rm -f openssl.tar.gz && \
+    cd openssl-1.1.1w && \
+    CC=clang "$PREFIX/bin/perl" ./Configure linux-aarch64 shared no-asm no-tests && \
+    make -j4 build_libs && \
     rm "$PREFIX/etc/apt/apt.conf.d/99proxy-build" && \
     "$PREFIX/bin/rustc" --version && \
     "$PREFIX/bin/git" --version && \
     ls -l "$PREFIX/bin/tclsh" && \
     ls -l "$PREFIX/realib-sqlite/sqlite-amalgamation-3450300/sqlite3.c" && \
-    ls -d "$PREFIX/realib-sqlite/sqlite-src-3450300"
+    ls -d "$PREFIX/realib-sqlite/sqlite-src-3450300" && \
+    ls -l "$PREFIX/realib-openssl/openssl-1.1.1w/libcrypto.so"* && \
+    ls -l "$PREFIX/realib-openssl/openssl-1.1.1w/include/openssl/sha.h"
