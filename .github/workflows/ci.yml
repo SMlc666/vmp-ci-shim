@@ -60,7 +60,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: src/tests/cpp_fixtures/eh_fixture/build
-          key: eh-fixture-glibc-${{ hashFiles('src/tests/cpp_fixtures/**') }}
+          key: eh-fixture-glibc-${{ hashFiles('src/tests/cpp_fixtures/eh_fixture/**') }}
 
       - id: test
         name: Run cargo test
@@ -100,7 +100,7 @@ jobs:
           path: |
             /tmp/sqlite-amalgamation-3450300
             /tmp/openssl-1.1.1w
-          key: realib-glibc-${{ hashFiles('src/tests/realib_fixtures/**/build.sh') }}
+          key: realib-glibc-${{ hashFiles('src/tests/realib_fixtures/**') }}
 
       - name: Real-lib suite e2e (glibc)
         if: always()
@@ -128,22 +128,28 @@ jobs:
       - name: Check glibc realib gate
         if: always()
         run: |
-          ratios=$(grep -oP 'surviving_pass_ratio = [0-9]+\.[0-9]+' /tmp/test.log || true)
-          last_sqlite_ratio=$(echo "$ratios" | head -1 | grep -oP '[0-9]+\.[0-9]+' || echo "0.0")
-          last_libcrypto_ratio=$(echo "$ratios" | tail -1 | grep -oP '[0-9]+\.[0-9]+' || echo "0.0")
-          echo "sqlite surviving_pass_ratio = $last_sqlite_ratio"
-          echo "libcrypto surviving_pass_ratio = $last_libcrypto_ratio"
+          # Explicit per-suite extraction — each suite emits exactly one
+          # `[realib_<suite>] surviving_pass_ratio = X.XXX (…)` line per run.
+          # Use PCRE \K to return only the number. Default to 0.0 when a
+          # suite emitted no ratio line (binary crashed before gate emit),
+          # which fails the gate rather than silently greenlighting it.
+          sqlite_ratio=$(grep -oP '\[realib_sqlite\] surviving_pass_ratio = \K[0-9]+\.[0-9]+' /tmp/test.log | tail -1)
+          libcrypto_ratio=$(grep -oP '\[realib_libcrypto\] surviving_pass_ratio = \K[0-9]+\.[0-9]+' /tmp/test.log | tail -1)
+          sqlite_ratio="${sqlite_ratio:-0.0}"
+          libcrypto_ratio="${libcrypto_ratio:-0.0}"
+          echo "sqlite    surviving_pass_ratio = $sqlite_ratio"
+          echo "libcrypto surviving_pass_ratio = $libcrypto_ratio"
           gate_fail=0
-          if awk "BEGIN {exit !($last_sqlite_ratio >= 1.0)}"; then
+          if awk "BEGIN {exit !($sqlite_ratio >= 1.0)}"; then
             echo "SQLITE GATE PASS"
           else
-            echo "SQLITE GATE FAIL: ratio=$last_sqlite_ratio < 1.0"
+            echo "SQLITE GATE FAIL: ratio=$sqlite_ratio < 1.0"
             gate_fail=1
           fi
-          if awk "BEGIN {exit !($last_libcrypto_ratio >= 1.0)}"; then
+          if awk "BEGIN {exit !($libcrypto_ratio >= 1.0)}"; then
             echo "LIBCRYPTO GATE PASS"
           else
-            echo "LIBCRYPTO GATE FAIL: ratio=$last_libcrypto_ratio < 1.0"
+            echo "LIBCRYPTO GATE FAIL: ratio=$libcrypto_ratio < 1.0"
             gate_fail=1
           fi
           if [ "$gate_fail" -ne 0 ]; then exit 1; fi
@@ -155,14 +161,14 @@ jobs:
           path: |
             /tmp/sqlite-amalgamation-3450300
             /tmp/openssl-1.1.1w
-          key: realib-glibc-${{ hashFiles('src/tests/realib_fixtures/**/build.sh') }}
+          key: realib-glibc-${{ hashFiles('src/tests/realib_fixtures/**') }}
 
       - name: Save eh_fixture cache (glibc)
         if: always()
         uses: actions/cache/save@v4
         with:
           path: src/tests/cpp_fixtures/eh_fixture/build
-          key: eh-fixture-glibc-${{ hashFiles('src/tests/cpp_fixtures/**') }}
+          key: eh-fixture-glibc-${{ hashFiles('src/tests/cpp_fixtures/eh_fixture/**') }}
 
   # Bionic job: native execution of termux's bionic userland on the ARM64
   # Linux host. No Docker, no chroot — extract a pre-baked termux+rust
@@ -293,7 +299,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: src/tests/cpp_fixtures/eh_fixture/build
-          key: eh-fixture-bionic-${{ hashFiles('src/tests/cpp_fixtures/**') }}
+          key: eh-fixture-bionic-${{ hashFiles('src/tests/cpp_fixtures/eh_fixture/**') }}
 
       - id: test
         name: Run cargo test against bionic
@@ -381,22 +387,28 @@ jobs:
       - name: Check bionic realib gate
         if: always()
         run: |
-          ratios=$(grep -oP 'surviving_pass_ratio = [0-9]+\.[0-9]+' /tmp/test.log || true)
-          last_sqlite_ratio=$(echo "$ratios" | head -1 | grep -oP '[0-9]+\.[0-9]+' || echo "0.0")
-          last_libcrypto_ratio=$(echo "$ratios" | tail -1 | grep -oP '[0-9]+\.[0-9]+' || echo "0.0")
-          echo "sqlite surviving_pass_ratio = $last_sqlite_ratio"
-          echo "libcrypto surviving_pass_ratio = $last_libcrypto_ratio"
+          # Explicit per-suite extraction — each suite emits exactly one
+          # `[realib_<suite>] surviving_pass_ratio = X.XXX (…)` line per run.
+          # Use PCRE \K to return only the number. Default to 0.0 when a
+          # suite emitted no ratio line (binary crashed before gate emit),
+          # which fails the gate rather than silently greenlighting it.
+          sqlite_ratio=$(grep -oP '\[realib_sqlite\] surviving_pass_ratio = \K[0-9]+\.[0-9]+' /tmp/test.log | tail -1)
+          libcrypto_ratio=$(grep -oP '\[realib_libcrypto\] surviving_pass_ratio = \K[0-9]+\.[0-9]+' /tmp/test.log | tail -1)
+          sqlite_ratio="${sqlite_ratio:-0.0}"
+          libcrypto_ratio="${libcrypto_ratio:-0.0}"
+          echo "sqlite    surviving_pass_ratio = $sqlite_ratio"
+          echo "libcrypto surviving_pass_ratio = $libcrypto_ratio"
           gate_fail=0
-          if awk "BEGIN {exit !($last_sqlite_ratio >= 1.0)}"; then
+          if awk "BEGIN {exit !($sqlite_ratio >= 1.0)}"; then
             echo "SQLITE GATE PASS"
           else
-            echo "SQLITE GATE FAIL: ratio=$last_sqlite_ratio < 1.0"
+            echo "SQLITE GATE FAIL: ratio=$sqlite_ratio < 1.0"
             gate_fail=1
           fi
-          if awk "BEGIN {exit !($last_libcrypto_ratio >= 1.0)}"; then
+          if awk "BEGIN {exit !($libcrypto_ratio >= 1.0)}"; then
             echo "LIBCRYPTO GATE PASS"
           else
-            echo "LIBCRYPTO GATE FAIL: ratio=$last_libcrypto_ratio < 1.0"
+            echo "LIBCRYPTO GATE FAIL: ratio=$libcrypto_ratio < 1.0"
             gate_fail=1
           fi
           if [ "$gate_fail" -ne 0 ]; then exit 1; fi
@@ -444,7 +456,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: src/tests/cpp_fixtures/eh_fixture/build
-          key: eh-fixture-bionic-${{ hashFiles('src/tests/cpp_fixtures/**') }}
+          key: eh-fixture-bionic-${{ hashFiles('src/tests/cpp_fixtures/eh_fixture/**') }}
 
       - if: failure()
         uses: actions/upload-artifact@v4
