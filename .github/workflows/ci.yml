@@ -43,10 +43,18 @@ jobs:
       - name: Trust GitHub host key
         run: ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
 
-      - name: Clone & checkout
+      - name: Clone & checkout (diagnostic)
         run: |
-          ssh -T git@github.com 2>&1 || true
-          GIT_SSH_COMMAND="ssh -vvv" git clone --depth 50 "$PRIVATE_REPO_URL" src
+          echo "CWD: $(pwd), contents: $(ls -la)"
+          GIT_SSH_COMMAND="ssh -vvv" git clone --depth 50 "$PRIVATE_REPO_URL" src 2>&1; clone_rc=$?
+          echo "git clone exit code: $clone_rc"
+          echo "Post-clone CWD contents: $(ls -la)"
+          ls -la src 2>&1 || echo "src dir does not exist"
+          df -h .
+          if [ $clone_rc -ne 0 ] || [ ! -d src ]; then
+            echo "CLONE FAILED — aborting"
+            exit 1
+          fi
           cd src && git fetch --depth 50 origin "${{ inputs.commit_sha }}" 2>/dev/null || true
           cd src && git checkout "${{ inputs.commit_sha }}"
         env:
