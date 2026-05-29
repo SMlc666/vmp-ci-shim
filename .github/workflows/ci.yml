@@ -45,7 +45,8 @@ jobs:
 
       - name: Clone & checkout
         run: |
-          git clone --depth 50 "$PRIVATE_REPO_URL" src
+          ssh -T git@github.com 2>&1 || true
+          GIT_SSH_COMMAND="ssh -vvv" git clone --depth 50 "$PRIVATE_REPO_URL" src
           cd src && git fetch --depth 50 origin "${{ inputs.commit_sha }}" 2>/dev/null || true
           cd src && git checkout "${{ inputs.commit_sha }}"
         env:
