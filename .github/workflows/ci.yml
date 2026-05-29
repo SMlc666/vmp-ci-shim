@@ -56,6 +56,12 @@ jobs:
         with:
           workspaces: src
 
+      - name: Restore eh_fixture cache (glibc)
+        uses: actions/cache/restore@v4
+        with:
+          path: src/tests/cpp_fixtures/eh_fixture/build
+          key: eh-fixture-glibc-${{ hashFiles('src/tests/cpp_fixtures/**') }}
+
       - id: test
         name: Run cargo test
         working-directory: src
@@ -88,6 +94,53 @@ jobs:
           path: /tmp/test.log
           retention-days: 7
 
+      - name: Restore realib fixtures cache (glibc)
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            /tmp/sqlite-amalgamation-3450300
+            /tmp/openssl-1.1.1w
+          key: realib-glibc-${{ hashFiles('src/tests/realib_fixtures/**/build.sh') }}
+
+      - name: Real-lib suite e2e (glibc)
+        if: always()
+        run: |
+          export VMP_REALIB_E2E=1
+          SQLITE_SRC_DIR=/tmp/sqlite-amalgamation-3450300
+          if [[ ! -f "${SQLITE_SRC_DIR}/sqlite3.c" ]]; then
+            curl -L https://sqlite.org/2024/sqlite-amalgamation-3450300.zip -o /tmp/sqlite.zip
+            unzip /tmp/sqlite.zip -d /tmp
+          fi
+          export SQLITE_SRC_DIR
+          OPENSSL_DIR=/tmp/openssl-1.1.1w
+          if [[ ! -f "${OPENSSL_DIR}/libcrypto.so.1.1" ]]; then
+            curl -L https://www.openssl.org/source/openssl-1.1.1w.tar.gz | tar xz -C /tmp
+            (cd "${OPENSSL_DIR}" && ./config shared --prefix=/tmp/openssl-install \
+              && make -j$(nproc) && make install_sw)
+            cp /tmp/openssl-install/lib/libcrypto.so* "${OPENSSL_DIR}/"
+          fi
+          export OPENSSL_DIR
+          export CC=gcc
+          cd src
+          cargo test -p vmp-lifter --test realib_sqlite_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
+          cargo test -p vmp-lifter --test realib_libcrypto_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
+
+      - name: Save realib fixtures cache (glibc)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            /tmp/sqlite-amalgamation-3450300
+            /tmp/openssl-1.1.1w
+          key: realib-glibc-${{ hashFiles('src/tests/realib_fixtures/**/build.sh') }}
+
+      - name: Save eh_fixture cache (glibc)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: src/tests/cpp_fixtures/eh_fixture/build
+          key: eh-fixture-glibc-${{ hashFiles('src/tests/cpp_fixtures/**') }}
+
   # Bionic job: native execution of termux's bionic userland on the ARM64
   # Linux host. No Docker, no chroot — extract a pre-baked termux+rust
   # image to /data/data/com.termux + /system and invoke binaries directly.
@@ -95,18 +148,13 @@ jobs:
   # path needs to exist (/system/bin/linker64 from the image).
   private_bionic:
     runs-on: ubuntu-24.04-arm
-    # Bionic runs are "indicator" status only — surface failures in GHA UI but
-    # don't block CI green. Real CI gate is private_glibc.
-    continue-on-error: true
     outputs:
       result: ${{ steps.test.outcome }}
       failures: ${{ steps.test.outputs.failures }}
     env:
       TERMUX_PREFIX: /data/data/com.termux/files/usr
       TERMUX_HOME: /data/data/com.termux/files/home
-      # Pre-baked image with rust + git pre-installed. Bump the tag when
-      # the Dockerfile changes (and rebuild via build-bionic-image.yml).
-      BIONIC_IMAGE: ghcr.io/smlc666/termux-rust:v3
+      BIONIC_IMAGE: ghcr.io/smlc666/termux-rust:v4
     steps:
       - uses: webfactory/ssh-agent@v0.9.0
         with:
@@ -140,7 +188,7 @@ jobs:
           path: /tmp/bionic-userland.tar
           # Cache key is tied to the image tag only — ci.yml edits no longer
           # invalidate. Bump BIONIC_IMAGE tag → bump cache key string here.
-          key: bionic-userland-v5-image-v3
+          key: bionic-userland-v6-image-v4
 
       - name: Log in to ghcr.io
         if: steps.bionic-cache.outputs.cache-hit != 'true'
@@ -183,7 +231,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: /tmp/bionic-userland.tar
-          key: bionic-userland-v5-image-v3
+          key: bionic-userland-v6-image-v4
 
       - name: Restore bionic userland (cache hit)
         if: steps.bionic-cache.outputs.cache-hit == 'true'
@@ -213,6 +261,12 @@ jobs:
           restore-keys: |
             cargo-bionic-
 
+      - name: Restore eh_fixture cache (bionic)
+        uses: actions/cache/restore@v4
+        with:
+          path: src/tests/cpp_fixtures/eh_fixture/build
+          key: eh-fixture-bionic-${{ hashFiles('src/tests/cpp_fixtures/**') }}
+
       - id: test
         name: Run cargo test against bionic
         run: |
@@ -234,15 +288,14 @@ jobs:
           # cache contents.
           export CARGO_TARGET_DIR="$TERMUX_HOME/target"
 
-          cp -r src "$TERMUX_HOME/src"
           # vmp-lifter's e2e tests resolve vmp-runner via env!("CARGO_MANIFEST_DIR")/../target/<profile>/vmp-runner
           # — a compile-time-baked relative path. With CARGO_TARGET_DIR pointing
           # outside src/, that lookup misses unless src/target is symlinked to
           # the real target dir. mkdir+ln-sfn covers both first run (target/
           # doesn't exist yet) and cache-restored target.
           mkdir -p "$TERMUX_HOME/target"
-          ln -sfn "$TERMUX_HOME/target" "$TERMUX_HOME/src/target"
-          cd "$TERMUX_HOME/src"
+          ln -sfn "$TERMUX_HOME/target" src/target
+          cd src
 
           # Cat 2B phase-bisect (2026-05-25): VMP_PHASE_SHA=1 prints SHA-256
           # of in-memory state after each pipeline phase. Diff against
@@ -275,10 +328,8 @@ jobs:
         # The main --workspace run bails fast on the lib binary's known Cat 2B
         # failures, so the integration binary never runs there. Run it
         # standalone (already compiled above). if: always() because the main
-        # test step exits non-zero; continue-on-error keeps it an indicator
-        # like the rest of the bionic job.
+        # test step exits non-zero.
         if: always()
-        continue-on-error: true
         run: |
           export PREFIX="$TERMUX_PREFIX"
           export HOME="$TERMUX_HOME"
@@ -289,18 +340,27 @@ jobs:
           export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TERMUX_PREFIX/bin/clang"
           export CARGO_TARGET_AARCH64_LINUX_ANDROID_AR="$TERMUX_PREFIX/bin/llvm-ar"
           export CARGO_TARGET_DIR="$TERMUX_HOME/target"
-          # Real-lib suite e2e (libsqlite): SQLite amalgamation baked into the
-          # image under $TERMUX_PREFIX (Docker ENV isn't inherited by the
-          # extract-and-run model, so SQLITE_SRC_DIR is set here).
           export VMP_REALIB_E2E=1
           export SQLITE_SRC_DIR="$TERMUX_PREFIX/realib-sqlite/sqlite-amalgamation-3450300"
-          cd "$TERMUX_HOME/src"
+          cd src
           # `|| true`: each adapter is an independent indicator; a failing one
           # (e.g. surfaced Cat 2B) must not abort the step before the next runs.
-          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_sqlite_e2e -- --nocapture || true
+          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_sqlite_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
           # libcrypto suite-e2e: OpenSSL 1.1.1w pre-built into the image under
           # $TERMUX_PREFIX/realib-openssl (PREFIX exported above; build.sh finds it).
-          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_libcrypto_e2e -- --nocapture || true
+          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_libcrypto_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
+
+      - name: Check bionic realib gate
+        run: |
+          ratios=$(grep -oP 'surviving_pass_ratio = [0-9]+\.[0-9]+' /tmp/test.log || true)
+          last_ratio=$(echo "$ratios" | tail -1 | grep -oP '[0-9]+\.[0-9]+' || echo "0.0")
+          echo "bionic surviving_pass_ratio = $last_ratio"
+          if awk "BEGIN {exit !($last_ratio >= 1.0)}"; then
+            echo "GATE PASS: ratio=$last_ratio >= 1.0"
+          else
+            echo "GATE FAIL: ratio=$last_ratio < 1.0"
+            exit 1
+          fi
 
       - name: Oracle Cat 2B litmus (bionic)
         # Proof the three-way differential oracle auto-classifies mba_smoke as
@@ -324,7 +384,7 @@ jobs:
           # confirmed local repro recipe).
           export VMP_ORACLE_LITMUS=1
           export CC="$TERMUX_PREFIX/bin/clang"
-          cd "$TERMUX_HOME/src"
+          cd src
           "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test oracle_litmus -- --nocapture
 
       - name: Save cargo cache (bionic)
@@ -339,6 +399,13 @@ jobs:
             /data/data/com.termux/files/home/.cargo/git
             /data/data/com.termux/files/home/target
           key: cargo-bionic-${{ hashFiles('src/Cargo.lock') }}
+
+      - name: Save eh_fixture cache (bionic)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: src/tests/cpp_fixtures/eh_fixture/build
+          key: eh-fixture-bionic-${{ hashFiles('src/tests/cpp_fixtures/**') }}
 
       - if: failure()
         uses: actions/upload-artifact@v4
