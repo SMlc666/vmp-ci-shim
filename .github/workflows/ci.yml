@@ -125,6 +125,28 @@ jobs:
           cargo test -p vmp-lifter --test realib_sqlite_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
           cargo test -p vmp-lifter --test realib_libcrypto_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
 
+      - name: Check glibc realib gate
+        run: |
+          ratios=$(grep -oP 'surviving_pass_ratio = [0-9]+\.[0-9]+' /tmp/test.log || true)
+          last_sqlite_ratio=$(echo "$ratios" | head -1 | grep -oP '[0-9]+\.[0-9]+' || echo "0.0")
+          last_libcrypto_ratio=$(echo "$ratios" | tail -1 | grep -oP '[0-9]+\.[0-9]+' || echo "0.0")
+          echo "sqlite surviving_pass_ratio = $last_sqlite_ratio"
+          echo "libcrypto surviving_pass_ratio = $last_libcrypto_ratio"
+          gate_fail=0
+          if awk "BEGIN {exit !($last_sqlite_ratio >= 1.0)}"; then
+            echo "SQLITE GATE PASS"
+          else
+            echo "SQLITE GATE FAIL: ratio=$last_sqlite_ratio < 1.0"
+            gate_fail=1
+          fi
+          if awk "BEGIN {exit !($last_libcrypto_ratio >= 1.0)}"; then
+            echo "LIBCRYPTO GATE PASS"
+          else
+            echo "LIBCRYPTO GATE FAIL: ratio=$last_libcrypto_ratio < 1.0"
+            gate_fail=1
+          fi
+          if [ "$gate_fail" -ne 0 ]; then exit 1; fi
+
       - name: Save realib fixtures cache (glibc)
         if: always()
         uses: actions/cache/save@v4
