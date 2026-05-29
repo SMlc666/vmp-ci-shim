@@ -46,6 +46,7 @@ jobs:
       - name: Clone & checkout
         run: |
           git clone --depth 50 "$PRIVATE_REPO_URL" src
+          cd src && git fetch --depth 50 origin "${{ inputs.commit_sha }}" 2>/dev/null || true
           cd src && git checkout "${{ inputs.commit_sha }}"
         env:
           PRIVATE_REPO_URL: ${{ secrets.PRIVATE_REPO_URL }}
@@ -166,6 +167,7 @@ jobs:
       - name: Clone & checkout
         run: |
           git clone --depth 50 "$PRIVATE_REPO_URL" src
+          cd src && git fetch --depth 50 origin "${{ inputs.commit_sha }}" 2>/dev/null || true
           cd src && git checkout "${{ inputs.commit_sha }}"
         env:
           PRIVATE_REPO_URL: ${{ secrets.PRIVATE_REPO_URL }}
