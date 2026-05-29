@@ -29,6 +29,9 @@ RUN PREFIX=/data/data/com.termux/files/usr && \
       "https://www.sqlite.org/2024/sqlite-src-3450300.zip" && \
     "$PREFIX/bin/unzip" -oq amalg.zip && "$PREFIX/bin/unzip" -oq src.zip && \
     rm -f amalg.zip src.zip && \
+    clang -shared -fPIC -O2 \
+      -o "$PREFIX/realib-sqlite/sqlite-amalgamation-3450300/libsqlite3.so" \
+      "$PREFIX/realib-sqlite/sqlite-amalgamation-3450300/sqlite3.c" && \
     mkdir -p "$PREFIX/realib-openssl" && cd "$PREFIX/realib-openssl" && \
     "$PREFIX/bin/curl" -fSL -x "$BUILD_PROXY" -o openssl.tar.gz \
       "https://www.openssl.org/source/openssl-1.1.1w.tar.gz" && \
@@ -41,6 +44,7 @@ RUN PREFIX=/data/data/com.termux/files/usr && \
     "$PREFIX/bin/git" --version && \
     ls -l "$PREFIX/bin/tclsh" && \
     ls -l "$PREFIX/realib-sqlite/sqlite-amalgamation-3450300/sqlite3.c" && \
+    ls -l "$PREFIX/realib-sqlite/sqlite-amalgamation-3450300/libsqlite3.so" && \
     ls -d "$PREFIX/realib-sqlite/sqlite-src-3450300" && \
     ls -l "$PREFIX/realib-openssl/openssl-1.1.1w/libcrypto.so"* && \
     ls -l "$PREFIX/realib-openssl/openssl-1.1.1w/include/openssl/sha.h"
