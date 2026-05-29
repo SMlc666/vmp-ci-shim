@@ -126,6 +126,7 @@ jobs:
           cargo test -p vmp-lifter --test realib_libcrypto_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
 
       - name: Check glibc realib gate
+        if: always()
         run: |
           ratios=$(grep -oP 'surviving_pass_ratio = [0-9]+\.[0-9]+' /tmp/test.log || true)
           last_sqlite_ratio=$(echo "$ratios" | head -1 | grep -oP '[0-9]+\.[0-9]+' || echo "0.0")
@@ -176,6 +177,11 @@ jobs:
     env:
       TERMUX_PREFIX: /data/data/com.termux/files/usr
       TERMUX_HOME: /data/data/com.termux/files/home
+      # Pre-baked image with rust + git pre-installed. Bump the tag when
+      # the Dockerfile changes (and rebuild via build-bionic-image.yml).
+      # ALSO bump the bionic-userland cache key string below
+      # (`bionic-userland-vN-image-vM`) to match, otherwise stale
+      # userland tarball will be served from cache and ignore the new image.
       BIONIC_IMAGE: ghcr.io/smlc666/termux-rust:v4
     steps:
       - uses: webfactory/ssh-agent@v0.9.0
@@ -373,16 +379,27 @@ jobs:
           "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_libcrypto_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
 
       - name: Check bionic realib gate
+        if: always()
         run: |
           ratios=$(grep -oP 'surviving_pass_ratio = [0-9]+\.[0-9]+' /tmp/test.log || true)
-          last_ratio=$(echo "$ratios" | tail -1 | grep -oP '[0-9]+\.[0-9]+' || echo "0.0")
-          echo "bionic surviving_pass_ratio = $last_ratio"
-          if awk "BEGIN {exit !($last_ratio >= 1.0)}"; then
-            echo "GATE PASS: ratio=$last_ratio >= 1.0"
+          last_sqlite_ratio=$(echo "$ratios" | head -1 | grep -oP '[0-9]+\.[0-9]+' || echo "0.0")
+          last_libcrypto_ratio=$(echo "$ratios" | tail -1 | grep -oP '[0-9]+\.[0-9]+' || echo "0.0")
+          echo "sqlite surviving_pass_ratio = $last_sqlite_ratio"
+          echo "libcrypto surviving_pass_ratio = $last_libcrypto_ratio"
+          gate_fail=0
+          if awk "BEGIN {exit !($last_sqlite_ratio >= 1.0)}"; then
+            echo "SQLITE GATE PASS"
           else
-            echo "GATE FAIL: ratio=$last_ratio < 1.0"
-            exit 1
+            echo "SQLITE GATE FAIL: ratio=$last_sqlite_ratio < 1.0"
+            gate_fail=1
           fi
+          if awk "BEGIN {exit !($last_libcrypto_ratio >= 1.0)}"; then
+            echo "LIBCRYPTO GATE PASS"
+          else
+            echo "LIBCRYPTO GATE FAIL: ratio=$last_libcrypto_ratio < 1.0"
+            gate_fail=1
+          fi
+          if [ "$gate_fail" -ne 0 ]; then exit 1; fi
 
       - name: Oracle Cat 2B litmus (bionic)
         # Proof the three-way differential oracle auto-classifies mba_smoke as
