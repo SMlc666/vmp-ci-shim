@@ -104,6 +104,13 @@ jobs:
             /tmp/openssl-1.1.1w
           key: realib-extdeps-glibc-v1
 
+      - name: Precompile realib e2e binaries (glibc)
+        if: always()
+        working-directory: src
+        run: |
+          CC=gcc cargo test -p vmp-lifter --test realib_sqlite_e2e --no-run
+          CC=gcc cargo test -p vmp-lifter --test realib_libcrypto_e2e --no-run
+
       - name: Real-lib suite e2e (glibc)
         if: always()
         run: |
@@ -370,10 +377,26 @@ jobs:
           fi
           exit $rc
 
+      - name: Precompile realib e2e binaries (bionic)
+        if: always()
+        run: |
+          export PREFIX="$TERMUX_PREFIX"
+          export HOME="$TERMUX_HOME"
+          export PATH="$TERMUX_PREFIX/bin:$PATH"
+          export HTTPS_PROXY=http://127.0.0.1:3128
+          export HTTP_PROXY=http://127.0.0.1:3128
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TERMUX_PREFIX/bin/clang"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_AR="$TERMUX_PREFIX/bin/llvm-ar"
+          export CARGO_TARGET_DIR="$TERMUX_HOME/target"
+          export CC="$TERMUX_PREFIX/bin/clang"
+          cd src
+          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_sqlite_e2e --no-run
+          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_libcrypto_e2e --no-run
+
       - name: Real-lib suite e2e (libsqlite + libcrypto, bionic)
         # The main --workspace run bails fast on the lib binary's known Cat 2B
         # failures, so the integration binary never runs there. Run it
-        # standalone (already compiled above). if: always() because the main
+        # standalone (precompiled above). if: always() because the main
         # test step exits non-zero.
         if: always()
         run: |
