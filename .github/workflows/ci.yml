@@ -305,6 +305,14 @@ jobs:
           path: src/tests/cpp_fixtures/eh_fixture/build
           key: eh-fixture-bionic-${{ hashFiles('src/tests/cpp_fixtures/eh_fixture/**') }}
 
+      - name: Restore realib fixtures cache (bionic)
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            /tmp/sqlite-amalgamation-3450300
+            /tmp/openssl-1.1.1w
+          key: realib-extdeps-bionic-v1
+
       - id: test
         name: Run cargo test against bionic
         run: |
@@ -379,13 +387,42 @@ jobs:
           export CARGO_TARGET_AARCH64_LINUX_ANDROID_AR="$TERMUX_PREFIX/bin/llvm-ar"
           export CARGO_TARGET_DIR="$TERMUX_HOME/target"
           export VMP_REALIB_E2E=1
-          export SQLITE_SRC_DIR="$TERMUX_PREFIX/realib-sqlite/sqlite-amalgamation-3450300"
+
+          SQLITE_SRC_DIR=/tmp/sqlite-amalgamation-3450300
+          if [[ ! -f "${SQLITE_SRC_DIR}/sqlite3.c" ]]; then
+            # Cache miss — fall back to the image-baked copy if available,
+            # otherwise download fresh (sqlite is pure C source, no
+            # platform-specific build needed).
+            BAKED="$TERMUX_PREFIX/realib-sqlite/sqlite-amalgamation-3450300"
+            if [[ -f "${BAKED}/sqlite3.c" ]]; then
+              cp -a "$BAKED" /tmp/sqlite-amalgamation-3450300
+            else
+              curl -L https://sqlite.org/2024/sqlite-amalgamation-3450300.zip -o /tmp/sqlite.zip
+              unzip /tmp/sqlite.zip -d /tmp
+            fi
+          fi
+          export SQLITE_SRC_DIR
+
+          OPENSSL_DIR=/tmp/openssl-1.1.1w
+          if [[ ! -f "${OPENSSL_DIR}/libcrypto.so.1.1" ]]; then
+            # Cache miss — use the image-baked bionic-compiled copy.
+            # Do NOT run ./config + make here: openssl's config script has
+            # bionic-specific quirks; the image ships a pre-verified build.
+            BAKED="$TERMUX_PREFIX/realib-openssl"
+            if [[ -f "${BAKED}/libcrypto.so.1.1" ]]; then
+              cp -a "$BAKED" /tmp/openssl-1.1.1w
+            else
+              echo "FATAL: no cached or baked openssl for bionic" >&2
+              exit 1
+            fi
+          fi
+          export OPENSSL_DIR
+
+          export CC="$TERMUX_PREFIX/bin/clang"
           cd src
           # `|| true`: each adapter is an independent indicator; a failing one
           # (e.g. surfaced Cat 2B) must not abort the step before the next runs.
           "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_sqlite_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
-          # libcrypto suite-e2e: OpenSSL 1.1.1w pre-built into the image under
-          # $TERMUX_PREFIX/realib-openssl (PREFIX exported above; build.sh finds it).
           "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_libcrypto_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
 
       - name: Check bionic realib gate
@@ -416,6 +453,15 @@ jobs:
             gate_fail=1
           fi
           if [ "$gate_fail" -ne 0 ]; then exit 1; fi
+
+      - name: Save realib fixtures cache (bionic)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            /tmp/sqlite-amalgamation-3450300
+            /tmp/openssl-1.1.1w
+          key: realib-extdeps-bionic-v1
 
       - name: Oracle Cat 2B litmus (bionic)
         # Proof the three-way differential oracle auto-classifies mba_smoke as
