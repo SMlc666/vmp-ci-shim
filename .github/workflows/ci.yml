@@ -408,7 +408,9 @@ jobs:
             # Cache miss — use the image-baked bionic-compiled copy.
             # Do NOT run ./config + make here: openssl's config script has
             # bionic-specific quirks; the image ships a pre-verified build.
-            BAKED="$TERMUX_PREFIX/realib-openssl"
+            # NOTE: Dockerfile lays it out at realib-openssl/openssl-1.1.1w/
+            # (subdirectory), not directly under realib-openssl/.
+            BAKED="$TERMUX_PREFIX/realib-openssl/openssl-1.1.1w"
             if [[ -f "${BAKED}/libcrypto.so.1.1" ]]; then
               cp -a "$BAKED" /tmp/openssl-1.1.1w
             else
