@@ -102,7 +102,7 @@ jobs:
           path: |
             /tmp/sqlite-amalgamation-3450300
             /tmp/openssl-1.1.1w
-          key: realib-glibc-${{ hashFiles('src/tests/realib_fixtures/**') }}
+          key: realib-extdeps-glibc-v1
 
       - name: Real-lib suite e2e (glibc)
         if: always()
@@ -163,7 +163,7 @@ jobs:
           path: |
             /tmp/sqlite-amalgamation-3450300
             /tmp/openssl-1.1.1w
-          key: realib-glibc-${{ hashFiles('src/tests/realib_fixtures/**') }}
+          key: realib-extdeps-glibc-v1
 
       - name: Save eh_fixture cache (glibc)
         if: always()
