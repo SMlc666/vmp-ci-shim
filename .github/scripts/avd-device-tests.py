@@ -69,7 +69,7 @@ def case_tmp_write_read():
     actual = adb_shell(
         "sh",
         "-c",
-        "echo vmp-avd-smoke > /data/local/tmp/vmp-avd-smoke.txt "
+        "echo -n vmp-avd-smoke > /data/local/tmp/vmp-avd-smoke.txt "
         "&& cat /data/local/tmp/vmp-avd-smoke.txt "
         "&& rm /data/local/tmp/vmp-avd-smoke.txt",
     )
