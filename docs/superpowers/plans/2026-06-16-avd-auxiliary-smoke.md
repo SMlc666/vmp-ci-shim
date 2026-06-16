@@ -4,7 +4,7 @@
 
 **Goal:** Add an isolated Android Emulator smoke workflow with manual non-blocking mode and nightly auxiliary-gate mode, and make it run a small device-side smoke test suite.
 
-**Architecture:** Create a new `.github/workflows/avd-smoke.yml` workflow rather than modifying the current `ci.yml`. The workflow resolves a private repo ref, boots an x86_64 AVD, collects adb/runtime facts, runs device-side smoke tests, writes `avd-smoke-report.json` and `avd-device-tests.json`, and uploads artifacts. Manual runs are job-level `continue-on-error`; scheduled runs fail the standalone workflow when smoke fails.
+**Architecture:** Create a new `.github/workflows/avd-smoke.yml` workflow rather than modifying the current `ci.yml`. The workflow resolves a private repo ref, enables Linux KVM access, restores an AVD snapshot cache, seeds that cache on misses, boots the cached x86_64 AVD, collects adb/runtime facts, runs device-side smoke tests, writes `avd-smoke-report.json` and `avd-device-tests.json`, and uploads artifacts. Manual runs are job-level `continue-on-error`; scheduled runs fail the standalone workflow when smoke fails.
 
 **Tech Stack:** GitHub Actions, `reactivecircus/android-emulator-runner`, `webfactory/ssh-agent`, bash, adb, Python `PyYAML` for static validation.
 
@@ -36,9 +36,13 @@ Define `workflow_dispatch` with `target_ref` and a nightly cron schedule. Do not
 
 Use the existing deploy-key pattern from `ci.yml`, clone `PRIVATE_REPO_URL`, check out `target_ref`, and record `PRIVATE_SHA`.
 
+- [ ] **Step 2b: Add KVM + snapshot cache**
+
+Add the standard Linux KVM udev rule, cache `~/.android/avd/*` plus `~/.android/adb*`, and seed the cache with a dedicated emulator-runner step on cache miss.
+
 - [x] **Step 3: Boot AVD and collect report**
 
-Use `reactivecircus/android-emulator-runner@v2` with an x86_64 image, `-accel off`, `-no-metrics`, and a single POSIX-`sh` helper invocation. Collect SDK, ABI, ABI list, linker64 existence, and write JSON.
+Use `reactivecircus/android-emulator-runner@v2` with an x86_64 image, `-no-metrics`, `-no-snapshot-save`, a restored snapshot cache, and a single POSIX-`sh` helper invocation. Collect SDK, ABI, ABI list, linker64 existence, and write JSON.
 
 - [ ] **Step 3b: Run device-side smoke tests**
 

@@ -13,18 +13,57 @@ DEVICE_TESTS = ROOT / ".github" / "scripts" / "avd-device-tests.py"
 def main() -> None:
     data = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     steps = data["jobs"]["avd_smoke"]["steps"]
+    step_names = {step.get("name", ""): step for step in steps}
+    if "Enable KVM" not in step_names:
+        raise SystemExit("missing Enable KVM step")
+    enable_kvm_run = str(step_names["Enable KVM"].get("run", ""))
+    if "99-kvm4all.rules" not in enable_kvm_run:
+        raise SystemExit("Enable KVM step must install the standard udev rule")
+
+    cache_steps = [
+        step for step in steps
+        if step.get("uses", "").startswith("actions/cache@")
+    ]
+    if len(cache_steps) != 1:
+        raise SystemExit(f"expected exactly one actions/cache step, found {len(cache_steps)}")
+    cache_step = cache_steps[0]
+    if cache_step.get("id") != "avd-cache":
+        raise SystemExit("AVD cache step must use id=avd-cache")
+    cache_path = str(cache_step.get("with", {}).get("path", ""))
+    if "~/.android/avd/*" not in cache_path or "~/.android/adb*" not in cache_path:
+        raise SystemExit("AVD cache step must cache ~/.android/avd/* and ~/.android/adb*")
+
     runner_steps = [
         step for step in steps
         if step.get("uses") == "reactivecircus/android-emulator-runner@v2"
     ]
-    if len(runner_steps) != 1:
-        raise SystemExit(f"expected exactly one emulator runner step, found {len(runner_steps)}")
+    if len(runner_steps) != 2:
+        raise SystemExit(f"expected exactly two emulator runner steps, found {len(runner_steps)}")
 
-    script = runner_steps[0]["with"]["script"]
-    if script.strip() != "sh .github/scripts/avd-smoke-report.sh":
-        raise SystemExit("emulator runner script must be a single helper invocation")
+    snapshot_steps = [step for step in runner_steps if step.get("with", {}).get("script") == 'echo "Generated AVD snapshot for caching."']
+    if len(snapshot_steps) != 1:
+        raise SystemExit("missing snapshot-generation emulator step")
+    snapshot_step = snapshot_steps[0]
+    if snapshot_step.get("if") != "steps.avd-cache.outputs.cache-hit != 'true'":
+        raise SystemExit("snapshot-generation step must run only on cache miss")
+    if snapshot_step.get("with", {}).get("force-avd-creation") is not False:
+        raise SystemExit("snapshot-generation step must set force-avd-creation=false")
+    snapshot_options = str(snapshot_step.get("with", {}).get("emulator-options", ""))
+    if "-no-snapshot" in snapshot_options:
+        raise SystemExit("snapshot-generation step must not disable snapshots")
+
+    test_steps = [step for step in runner_steps if step.get("with", {}).get("script") == "sh .github/scripts/avd-smoke-report.sh"]
+    if len(test_steps) != 1:
+        raise SystemExit("missing test emulator step")
+    test_step = test_steps[0]
+    script = test_step["with"]["script"]
     if "\n" in script.strip():
-        raise SystemExit("emulator runner script must not depend on multiline shell semantics")
+        raise SystemExit("emulator runner test script must not depend on multiline shell semantics")
+    if test_step.get("with", {}).get("force-avd-creation") is not False:
+        raise SystemExit("test emulator step must set force-avd-creation=false")
+    test_options = str(test_step.get("with", {}).get("emulator-options", ""))
+    if "-no-snapshot-save" not in test_options:
+        raise SystemExit("test emulator step must disable snapshot saving")
     if not HELPER.is_file():
         raise SystemExit(f"missing helper script: {HELPER.relative_to(ROOT)}")
     helper_text = HELPER.read_text(encoding="utf-8")

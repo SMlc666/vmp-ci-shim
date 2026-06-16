@@ -20,7 +20,7 @@ Add an AVD-based auxiliary signal with two operating modes:
 
 ## Architecture
 
-Create a separate `.github/workflows/avd-smoke.yml` workflow. It runs on `ubuntu-latest`, boots an x86_64 Android AVD using `reactivecircus/android-emulator-runner`, collects basic Android runtime properties through `adb`, runs device-side smoke tests, writes machine-readable `avd-smoke-report.json` and `avd-device-tests.json`, and uploads the reports plus `logcat`. The emulator runner invokes only a single POSIX `sh` helper command because the action executes `script:` lines one-by-one through `/usr/bin/sh`.
+Create a separate `.github/workflows/avd-smoke.yml` workflow. It runs on `ubuntu-latest`, enables `/dev/kvm`, restores a cached x86_64 AVD snapshot when available, and uses `reactivecircus/android-emulator-runner` both to seed the cache on misses and to boot the cached emulator for smoke execution. The workflow collects basic Android runtime properties through `adb`, runs device-side smoke tests, writes machine-readable `avd-smoke-report.json` and `avd-device-tests.json`, and uploads the reports plus `logcat`. The emulator runner invokes only a single POSIX `sh` helper command because the action executes `script:` lines one-by-one through `/usr/bin/sh`.
 
 The workflow clones the private source repository only to bind the smoke result to a target private ref and commit SHA. Manual runs accept `target_ref`; scheduled runs default to `main`.
 
@@ -29,19 +29,22 @@ The workflow clones the private source repository only to bind the smoke result 
 1. Resolve `target_ref` from workflow input or default to `main`.
 2. Clone private source through `DEPLOY_KEY` and `PRIVATE_REPO_URL`.
 3. Resolve the checked-out private commit SHA.
-4. Boot an AVD without KVM assumptions.
-5. Run `adb` probes:
+4. Enable `/dev/kvm` access on the GitHub Linux runner.
+5. Restore an AVD snapshot cache keyed by API level, target, ABI, and profile.
+6. On cache miss, create the AVD once and let emulator-runner save the default snapshot.
+7. Boot the cached AVD.
+8. Run `adb` probes:
    - `getprop ro.build.version.sdk`
    - `getprop ro.product.cpu.abi`
    - `getprop ro.product.cpu.abilist`
    - `/system/bin/linker64` existence
-6. Run device-side smoke tests:
+9. Run device-side smoke tests:
    - `adb get-state` is `device`
    - SDK and ABI properties are readable
    - `/data/local/tmp` supports a write/read/remove roundtrip
    - a small shell script can run on-device through `/system/bin/sh`
-7. Write `avd-device-tests.json` and embed the test summary in `avd-smoke-report.json`.
-8. Upload the reports and `logcat`.
+10. Write `avd-device-tests.json` and embed the test summary in `avd-smoke-report.json`.
+11. Upload the reports and `logcat`.
 
 ## Failure Semantics
 

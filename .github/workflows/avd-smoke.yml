@@ -28,6 +28,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
       - uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.DEPLOY_KEY }}
@@ -46,16 +53,34 @@ jobs:
         env:
           PRIVATE_REPO_URL: ${{ secrets.PRIVATE_REPO_URL }}
 
-      - name: Note KVM availability
-        run: |
-          if [ -e /dev/kvm ]; then
-            echo "KVM available"
-            sudo chmod 666 /dev/kvm || true
-          else
-            echo "KVM unavailable; emulator will run with -accel off"
-          fi
+      - name: AVD cache
+        id: avd-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.android/avd/*
+            ~/.android/adb*
+          key: avd-${{ runner.os }}-api35-googleapis-x86_64-pixel6-v1
 
-      - name: Boot AVD and collect smoke report
+      - name: Generate AVD snapshot for cache
+        if: steps.avd-cache.outputs.cache-hit != 'true'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          force-avd-creation: false
+          disable-animations: true
+          emulator-options: >-
+            -no-window
+            -no-audio
+            -no-boot-anim
+            -no-metrics
+            -gpu swiftshader_indirect
+          script: echo "Generated AVD snapshot for caching."
+
+      - name: Boot cached AVD and collect smoke report
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -63,15 +88,15 @@ jobs:
           arch: x86_64
           profile: pixel_6
           emulator-boot-timeout: 1200
+          force-avd-creation: false
           disable-animations: true
           emulator-options: >-
             -no-window
             -no-audio
             -no-boot-anim
-            -no-snapshot
             -no-metrics
             -gpu swiftshader_indirect
-            -accel off
+            -no-snapshot-save
           script: sh .github/scripts/avd-smoke-report.sh
 
       - name: Upload AVD smoke artifacts
