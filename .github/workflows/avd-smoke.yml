@@ -53,6 +53,9 @@ jobs:
         env:
           PRIVATE_REPO_URL: ${{ secrets.PRIVATE_REPO_URL }}
 
+      - name: Probe private repo Android artifacts
+        run: python3 .github/scripts/avd-project-probe.py
+
       - name: Restore AVD cache
         id: avd-cache
         uses: actions/cache/restore@v4
@@ -116,6 +119,7 @@ jobs:
           path: |
             avd-smoke-report.json
             avd-device-tests.json
+            avd-project-probe.json
             avd-logcat.txt
           retention-days: 14
           if-no-files-found: warn

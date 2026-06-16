@@ -21,6 +21,7 @@ Add an AVD-based auxiliary signal with two operating modes:
 ## Architecture
 
 Create a separate `.github/workflows/avd-smoke.yml` workflow. It runs on `ubuntu-latest`, enables `/dev/kvm`, restores a cached x86_64 AVD snapshot when available, and uses `reactivecircus/android-emulator-runner` both to seed the cache on misses and to boot the cached emulator for smoke execution. The workflow collects basic Android runtime properties through `adb`, runs device-side smoke tests, writes machine-readable `avd-smoke-report.json` and `avd-device-tests.json`, and uploads the reports plus `logcat`. The emulator runner invokes only a single POSIX `sh` helper command because the action executes `script:` lines one-by-one through `/usr/bin/sh`.
+Before booting the emulator, the workflow also scans the checked-out private repo for Android delivery signals such as APKs, AABs, manifests, Gradle build files, and shared libraries, and records the result in `avd-project-probe.json`.
 
 The workflow clones the private source repository only to bind the smoke result to a target private ref and commit SHA. Manual runs accept `target_ref`; scheduled runs default to `main`.
 
@@ -44,7 +45,8 @@ The workflow clones the private source repository only to bind the smoke result 
    - `/data/local/tmp` create/delete behavior is recorded as an advisory signal, not a hard gate
    - a small shell script can run on-device through `/system/bin/sh`
 10. Write `avd-device-tests.json` and embed the test summary in `avd-smoke-report.json`.
-11. Upload the reports and `logcat`.
+11. Probe the checked-out private repo for Android artifact signals and write `avd-project-probe.json`.
+12. Upload the reports and `logcat`.
 
 ## Failure Semantics
 

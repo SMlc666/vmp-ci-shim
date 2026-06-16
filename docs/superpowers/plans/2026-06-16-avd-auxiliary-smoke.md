@@ -4,7 +4,7 @@
 
 **Goal:** Add an isolated Android Emulator smoke workflow with manual non-blocking mode and nightly auxiliary-gate mode, and make it run a small device-side smoke test suite.
 
-**Architecture:** Create a new `.github/workflows/avd-smoke.yml` workflow rather than modifying the current `ci.yml`. The workflow resolves a private repo ref, enables Linux KVM access, restores an AVD snapshot cache, seeds that cache on misses, boots the cached x86_64 AVD, collects adb/runtime facts, runs device-side smoke tests, writes `avd-smoke-report.json` and `avd-device-tests.json`, and uploads artifacts. Manual runs are job-level `continue-on-error`; scheduled runs fail the standalone workflow when smoke fails.
+**Architecture:** Create a new `.github/workflows/avd-smoke.yml` workflow rather than modifying the current `ci.yml`. The workflow resolves a private repo ref, probes the checked-out private repo for Android delivery signals, enables Linux KVM access, restores an AVD snapshot cache, seeds that cache on misses, boots the cached x86_64 AVD, collects adb/runtime facts, runs device-side smoke tests, writes `avd-smoke-report.json`, `avd-device-tests.json`, and `avd-project-probe.json`, and uploads artifacts. Manual runs are job-level `continue-on-error`; scheduled runs fail the standalone workflow when smoke fails.
 
 **Tech Stack:** GitHub Actions, `reactivecircus/android-emulator-runner`, `webfactory/ssh-agent`, bash, adb, Python `PyYAML` for static validation.
 
@@ -36,6 +36,10 @@ Define `workflow_dispatch` with `target_ref` and a nightly cron schedule. Do not
 
 Use the existing deploy-key pattern from `ci.yml`, clone `PRIVATE_REPO_URL`, check out `target_ref`, and record `PRIVATE_SHA`.
 
+- [ ] **Step 2c: Probe private repo Android artifacts**
+
+Scan the checked-out private repo for APK/AAB files, Gradle build files, manifests, and shared libraries. Save the result to `avd-project-probe.json` and embed it into the main AVD report.
+
 - [ ] **Step 2b: Add KVM + snapshot cache**
 
 Add the standard Linux KVM udev rule, cache `~/.android/avd/*` plus `~/.android/adb*`, and seed the cache with a dedicated emulator-runner step on cache miss.
@@ -50,7 +54,7 @@ Check adb device state, property reads, and an on-device shell-script execution 
 
 - [x] **Step 4: Upload artifacts**
 
-Always upload `avd-smoke-report.json`, `avd-device-tests.json`, and `avd-logcat.txt` with 14-day retention.
+Always upload `avd-smoke-report.json`, `avd-device-tests.json`, `avd-project-probe.json`, and `avd-logcat.txt` with 14-day retention.
 
 ### Task 3: Validate Workflow
 

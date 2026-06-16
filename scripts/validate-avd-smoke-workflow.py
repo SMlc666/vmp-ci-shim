@@ -8,6 +8,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "avd-smoke.yml"
 HELPER = ROOT / ".github" / "scripts" / "avd-smoke-report.sh"
 DEVICE_TESTS = ROOT / ".github" / "scripts" / "avd-device-tests.py"
+PROJECT_PROBE = ROOT / ".github" / "scripts" / "avd-project-probe.py"
 
 
 def main() -> None:
@@ -16,6 +17,8 @@ def main() -> None:
     step_names = {step.get("name", ""): step for step in steps}
     if "Enable KVM" not in step_names:
         raise SystemExit("missing Enable KVM step")
+    if "Probe private repo Android artifacts" not in step_names:
+        raise SystemExit("missing private repo probe step")
     enable_kvm_run = str(step_names["Enable KVM"].get("run", ""))
     if "99-kvm4all.rules" not in enable_kvm_run:
         raise SystemExit("Enable KVM step must install the standard udev rule")
@@ -74,6 +77,8 @@ def main() -> None:
         raise SystemExit("AVD smoke helper must run device tests")
     if not DEVICE_TESTS.is_file():
         raise SystemExit(f"missing device test script: {DEVICE_TESTS.relative_to(ROOT)}")
+    if not PROJECT_PROBE.is_file():
+        raise SystemExit(f"missing project probe script: {PROJECT_PROBE.relative_to(ROOT)}")
     upload_steps = [
         step for step in steps
         if step.get("uses") == "actions/upload-artifact@v4"
@@ -81,6 +86,8 @@ def main() -> None:
     artifact_paths = "\n".join(str(step.get("with", {}).get("path", "")) for step in upload_steps)
     if "avd-device-tests.json" not in artifact_paths:
         raise SystemExit("AVD smoke artifacts must include avd-device-tests.json")
+    if "avd-project-probe.json" not in artifact_paths:
+        raise SystemExit("AVD smoke artifacts must include avd-project-probe.json")
 
     print("avd smoke workflow ok")
 

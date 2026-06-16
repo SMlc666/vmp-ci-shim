@@ -46,6 +46,16 @@ except FileNotFoundError:
         ],
     }
 
+try:
+    with open("avd-project-probe.json", encoding="utf-8") as f:
+        project_probe = json.load(f)
+except FileNotFoundError:
+    project_probe = {
+        "status": "missing",
+        "summary": "avd-project-probe.json was not produced",
+        "signals": {},
+    }
+
 
 report = {
     "workflow": "avd-smoke",
@@ -67,6 +77,7 @@ report = {
         "does_not_replace_bionic_shim_gate": True,
         "purpose": "Verify AVD boot, adb control, Android runtime smoke reporting, and device-side smoke tests.",
     },
+    "project_probe": project_probe,
     "tests": tests,
 }
 
