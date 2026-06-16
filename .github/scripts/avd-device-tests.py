@@ -26,6 +26,10 @@ def adb_shell(*args, timeout=30):
     return proc.stdout.strip()
 
 
+def adb_shell_script(script, timeout=30):
+    return adb_shell(script, timeout=timeout)
+
+
 def run_case(name, fn):
     started = time.monotonic()
     try:
@@ -76,9 +80,7 @@ def case_native_bridge_property():
 
 
 def case_libndk_translation_present():
-    path = adb_shell(
-        "sh",
-        "-c",
+    path = adb_shell_script(
         "if test -f /system/lib64/libndk_translation.so; then "
         "echo /system/lib64/libndk_translation.so; "
         "elif test -f /system_ext/lib64/libndk_translation.so; then "
@@ -95,15 +97,13 @@ def case_libndk_translation_present():
 def case_tmp_write_read():
     path = "/data/local/tmp/vmp-avd-smoke.txt"
     adb_shell("touch", path)
-    adb_shell("sh", "-c", f"test -e {path} && echo roundtrip-ok")
+    adb_shell_script(f"test -e {path} && echo roundtrip-ok")
     adb_shell("rm", "-f", path)
     return "roundtrip-ok"
 
 
 def case_device_shell_script():
-    actual = adb_shell(
-        "sh",
-        "-c",
+    actual = adb_shell_script(
         "echo '#!/system/bin/sh' > /data/local/tmp/vmp-avd-device-test.sh "
         "&& echo 'echo avd-device-test' >> /data/local/tmp/vmp-avd-device-test.sh "
         "&& sh /data/local/tmp/vmp-avd-device-test.sh "

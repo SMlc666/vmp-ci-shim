@@ -100,7 +100,7 @@ report = {
         "cpu_abi": adb_shell("getprop", "ro.product.cpu.abi"),
         "cpu_abilist": adb_shell("getprop", "ro.product.cpu.abilist"),
         "model": adb_shell("getprop", "ro.product.model"),
-        "linker64": adb_shell("sh", "-c", "test -x /system/bin/linker64 && echo present || echo missing"),
+        "linker64": adb_shell("test -x /system/bin/linker64 && echo present || echo missing"),
     },
     "scope": {
         "mode": "manual_non_blocking" if os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch" else "nightly_auxiliary_gate",

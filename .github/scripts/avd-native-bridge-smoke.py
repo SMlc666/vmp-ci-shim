@@ -30,10 +30,12 @@ def adb_shell(*args, timeout=60):
     return proc.stdout.strip()
 
 
+def adb_shell_script(script, timeout=60):
+    return adb_shell(script, timeout=timeout)
+
+
 def translation_path():
-    return adb_shell(
-        "sh",
-        "-c",
+    return adb_shell_script(
         "if test -f /system/lib64/libndk_translation.so; then "
         "echo /system/lib64/libndk_translation.so; "
         "elif test -f /system_ext/lib64/libndk_translation.so; then "
