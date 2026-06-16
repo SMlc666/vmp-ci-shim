@@ -68,6 +68,28 @@ def case_abi_property():
     return abi
 
 
+def case_native_bridge_property():
+    bridge = adb_shell("getprop", "ro.dalvik.vm.native.bridge")
+    if not bridge or bridge == "0":
+        raise RuntimeError(f"native bridge disabled: {bridge!r}")
+    return bridge
+
+
+def case_libndk_translation_present():
+    path = adb_shell(
+        "sh",
+        "-c",
+        "for p in "
+        "/system/lib64/libndk_translation.so "
+        "/system_ext/lib64/libndk_translation.so "
+        "/system/system_ext/lib64/libndk_translation.so; "
+        "do test -f \"$p\" && echo \"$p\" && exit 0; done; exit 1",
+    )
+    if not path:
+        raise RuntimeError("libndk_translation.so not found")
+    return path
+
+
 def case_tmp_write_read():
     path = "/data/local/tmp/vmp-avd-smoke.txt"
     adb_shell("touch", path)
@@ -95,6 +117,8 @@ def main():
         run_case("adb_state_is_device", case_adb_state),
         run_case("sdk_property_is_readable", case_sdk_property),
         run_case("abi_property_is_readable", case_abi_property),
+        run_case("native_bridge_property_is_enabled", case_native_bridge_property),
+        run_case("libndk_translation_is_present", case_libndk_translation_present),
         run_case("data_local_tmp_roundtrip", case_tmp_write_read),
         run_case("device_shell_script_runs", case_device_shell_script),
     ]

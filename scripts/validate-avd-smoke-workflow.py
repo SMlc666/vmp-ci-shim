@@ -9,12 +9,16 @@ WORKFLOW = ROOT / ".github" / "workflows" / "avd-smoke.yml"
 HELPER = ROOT / ".github" / "scripts" / "avd-smoke-report.sh"
 DEVICE_TESTS = ROOT / ".github" / "scripts" / "avd-device-tests.py"
 PROJECT_PROBE = ROOT / ".github" / "scripts" / "avd-project-probe.py"
+NATIVE_BRIDGE_BUILD = ROOT / ".github" / "scripts" / "build-native-bridge-harness.sh"
+NATIVE_BRIDGE_SMOKE = ROOT / ".github" / "scripts" / "avd-native-bridge-smoke.py"
 
 
 def main() -> None:
     data = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     steps = data["jobs"]["avd_smoke"]["steps"]
     step_names = {step.get("name", ""): step for step in steps}
+    if "Set up Java" not in step_names:
+        raise SystemExit("missing Set up Java step")
     if "Enable KVM" not in step_names:
         raise SystemExit("missing Enable KVM step")
     if "Probe private repo Android artifacts" not in step_names:
@@ -75,10 +79,25 @@ def main() -> None:
     helper_text = HELPER.read_text(encoding="utf-8")
     if "python3 .github/scripts/avd-device-tests.py" not in helper_text:
         raise SystemExit("AVD smoke helper must run device tests")
+    if "sh .github/scripts/build-native-bridge-harness.sh" not in helper_text:
+        raise SystemExit("AVD smoke helper must build the native-bridge harness")
+    if "python3 .github/scripts/avd-native-bridge-smoke.py" not in helper_text:
+        raise SystemExit("AVD smoke helper must run native-bridge smoke")
     if not DEVICE_TESTS.is_file():
         raise SystemExit(f"missing device test script: {DEVICE_TESTS.relative_to(ROOT)}")
     if not PROJECT_PROBE.is_file():
         raise SystemExit(f"missing project probe script: {PROJECT_PROBE.relative_to(ROOT)}")
+    if not NATIVE_BRIDGE_BUILD.is_file():
+        raise SystemExit(f"missing native-bridge build script: {NATIVE_BRIDGE_BUILD.relative_to(ROOT)}")
+    if not NATIVE_BRIDGE_SMOKE.is_file():
+        raise SystemExit(f"missing native-bridge smoke script: {NATIVE_BRIDGE_SMOKE.relative_to(ROOT)}")
+    project_probe_text = PROJECT_PROBE.read_text(encoding="utf-8")
+    if '"native_probe"' not in project_probe_text:
+        raise SystemExit("project probe script must emit native_probe details")
+    if '"avd_compatible_shared_lib_count"' not in project_probe_text:
+        raise SystemExit("project probe script must report avd-compatible shared lib count")
+    if '"android_arm64_shared_lib_count"' not in project_probe_text:
+        raise SystemExit("project probe script must report Android arm64 shared lib count")
     upload_steps = [
         step for step in steps
         if step.get("uses") == "actions/upload-artifact@v4"
@@ -88,6 +107,8 @@ def main() -> None:
         raise SystemExit("AVD smoke artifacts must include avd-device-tests.json")
     if "avd-project-probe.json" not in artifact_paths:
         raise SystemExit("AVD smoke artifacts must include avd-project-probe.json")
+    if "avd-native-bridge-smoke.json" not in artifact_paths:
+        raise SystemExit("AVD smoke artifacts must include avd-native-bridge-smoke.json")
 
     print("avd smoke workflow ok")
 

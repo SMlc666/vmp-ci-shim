@@ -8,6 +8,28 @@ trap 'adb logcat -d > avd-logcat.txt 2>/dev/null || true' EXIT
 test_rc=0
 python3 .github/scripts/avd-device-tests.py || test_rc=$?
 
+bridge_rc=0
+if sh .github/scripts/build-native-bridge-harness.sh; then
+  python3 .github/scripts/avd-native-bridge-smoke.py || bridge_rc=$?
+else
+  bridge_rc=$?
+  python3 - <<'PY'
+import json
+
+result = {
+    "status": "fail",
+    "detail": "native-bridge harness build failed",
+}
+with open("avd-native-bridge-smoke.json", "w", encoding="utf-8") as f:
+    json.dump(result, f, indent=2, sort_keys=True)
+    f.write("\n")
+print(json.dumps(result, indent=2, sort_keys=True))
+PY
+fi
+if [ "$bridge_rc" -ne 0 ]; then
+  test_rc=1
+fi
+
 python3 - <<'PY'
 import json
 import os
@@ -56,6 +78,15 @@ except FileNotFoundError:
         "signals": {},
     }
 
+try:
+    with open("avd-native-bridge-smoke.json", encoding="utf-8") as f:
+        native_bridge_smoke = json.load(f)
+except FileNotFoundError:
+    native_bridge_smoke = {
+        "status": "missing",
+        "detail": "avd-native-bridge-smoke.json was not produced",
+    }
+
 
 report = {
     "workflow": "avd-smoke",
@@ -75,9 +106,10 @@ report = {
         "mode": "manual_non_blocking" if os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch" else "nightly_auxiliary_gate",
         "does_not_validate_arm64_vmp": True,
         "does_not_replace_bionic_shim_gate": True,
-        "purpose": "Verify AVD boot, adb control, Android runtime smoke reporting, and device-side smoke tests.",
+        "purpose": "Verify x86_64 AVD boot, native-bridge/libndk availability, adb control, and a minimal translated arm64 JNI load smoke.",
     },
     "project_probe": project_probe,
+    "native_bridge_smoke": native_bridge_smoke,
     "tests": tests,
 }
 

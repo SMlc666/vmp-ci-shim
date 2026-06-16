@@ -28,6 +28,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
@@ -120,6 +126,8 @@ jobs:
             avd-smoke-report.json
             avd-device-tests.json
             avd-project-probe.json
+            avd-native-bridge-smoke.json
             avd-logcat.txt
+            native-bridge-smoke.apk
           retention-days: 14
           if-no-files-found: warn
