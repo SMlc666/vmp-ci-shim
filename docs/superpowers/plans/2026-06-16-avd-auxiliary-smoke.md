@@ -38,7 +38,7 @@ Use the existing deploy-key pattern from `ci.yml`, clone `PRIVATE_REPO_URL`, che
 
 - [x] **Step 3: Boot AVD and collect report**
 
-Use `reactivecircus/android-emulator-runner@v2` with an x86_64 image and `-accel off`. Collect SDK, ABI, ABI list, linker64 existence, and write JSON.
+Use `reactivecircus/android-emulator-runner@v2` with an x86_64 image, `-accel off`, `-no-metrics`, and a POSIX-`sh` compatible script. Collect SDK, ABI, ABI list, linker64 existence, and write JSON.
 
 - [x] **Step 4: Upload artifacts**
 
