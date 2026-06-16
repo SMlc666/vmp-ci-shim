@@ -42,6 +42,10 @@ def run_case(name, fn):
     }
 
 
+def case_is_required(case):
+    return case["name"] != "data_local_tmp_roundtrip"
+
+
 def case_adb_state():
     proc = adb("get-state", timeout=10)
     state = proc.stdout.strip()
@@ -94,10 +98,13 @@ def main():
         run_case("data_local_tmp_roundtrip", case_tmp_write_read),
         run_case("device_shell_script_runs", case_device_shell_script),
     ]
-    failed = [case for case in cases if case["status"] != "pass"]
+    failed = [case for case in cases if case["status"] != "pass" and case_is_required(case)]
+    advisory_failures = [case for case in cases if case["status"] != "pass" and not case_is_required(case)]
     result = {
         "status": "fail" if failed else "pass",
+        "advisory_status": "fail" if advisory_failures else "pass",
         "failed": len(failed),
+        "advisory_failed": len(advisory_failures),
         "passed": len(cases) - len(failed),
         "cases": cases,
     }

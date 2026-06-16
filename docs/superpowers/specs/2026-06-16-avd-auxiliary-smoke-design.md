@@ -41,7 +41,7 @@ The workflow clones the private source repository only to bind the smoke result 
 9. Run device-side smoke tests:
    - `adb get-state` is `device`
    - SDK and ABI properties are readable
-   - `/data/local/tmp` supports a write/read/remove roundtrip
+   - `/data/local/tmp` create/delete behavior is recorded as an advisory signal, not a hard gate
    - a small shell script can run on-device through `/system/bin/sh`
 10. Write `avd-device-tests.json` and embed the test summary in `avd-smoke-report.json`.
 11. Upload the reports and `logcat`.

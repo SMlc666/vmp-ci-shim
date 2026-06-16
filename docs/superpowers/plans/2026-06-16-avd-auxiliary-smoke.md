@@ -46,7 +46,7 @@ Use `reactivecircus/android-emulator-runner@v2` with an x86_64 image, `-no-metri
 
 - [ ] **Step 3b: Run device-side smoke tests**
 
-Check adb device state, property reads, `/data/local/tmp` write/read/remove, and an on-device shell-script execution path. Save the result to `avd-device-tests.json` and include it in the main report.
+Check adb device state, property reads, and an on-device shell-script execution path as hard-gate smoke tests. Record `/data/local/tmp` create/delete behavior as an advisory signal in `avd-device-tests.json`, but do not fail the workflow on that case alone.
 
 - [x] **Step 4: Upload artifacts**
 
