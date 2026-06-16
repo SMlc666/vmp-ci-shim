@@ -34,11 +34,13 @@ def translation_path():
     return adb_shell(
         "sh",
         "-c",
-        "for p in "
-        "/system/lib64/libndk_translation.so "
-        "/system_ext/lib64/libndk_translation.so "
-        "/system/system_ext/lib64/libndk_translation.so; "
-        "do test -f \"$p\" && echo \"$p\" && exit 0; done; exit 1",
+        "if test -f /system/lib64/libndk_translation.so; then "
+        "echo /system/lib64/libndk_translation.so; "
+        "elif test -f /system_ext/lib64/libndk_translation.so; then "
+        "echo /system_ext/lib64/libndk_translation.so; "
+        "elif test -f /system/system_ext/lib64/libndk_translation.so; then "
+        "echo /system/system_ext/lib64/libndk_translation.so; "
+        "else exit 1; fi",
     )
 
 

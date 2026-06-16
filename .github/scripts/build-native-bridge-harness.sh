@@ -83,10 +83,12 @@ javac \
     -d "$OUT_DIR/classes" \
     "$SRC_DIR/MainActivity.java"
 
+jar cf "$OUT_DIR/classes.jar" -C "$OUT_DIR/classes" .
+
 "$D8" \
     --lib "$ANDROID_JAR" \
     --output "$OUT_DIR/payload" \
-    "$OUT_DIR/classes"
+    "$OUT_DIR/classes.jar"
 
 "$CLANG" \
     -shared \
