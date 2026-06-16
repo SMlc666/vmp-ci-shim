@@ -53,8 +53,8 @@ jobs:
           set -euo pipefail
           git clone --depth 50 "$PRIVATE_REPO_URL" src
           cd src
-          git fetch origin "$TARGET_REF" --depth 50 || true
-          git checkout "$TARGET_REF"
+          git fetch origin "$TARGET_REF":"refs/remotes/origin/$TARGET_REF" --depth 50 || true
+          git checkout -B "$TARGET_REF" "origin/$TARGET_REF"
           echo "PRIVATE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
         env:
           PRIVATE_REPO_URL: ${{ secrets.PRIVATE_REPO_URL }}
