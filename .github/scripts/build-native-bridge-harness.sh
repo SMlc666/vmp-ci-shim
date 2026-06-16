@@ -4,6 +4,9 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
 SRC_DIR="$ROOT_DIR/native_bridge_smoke"
+PRIVATE_SRC_DIR="${PRIVATE_SRC_DIR:-src}"
+CPP_BUSINESS_DIR="$PRIVATE_SRC_DIR/tests/realib_fixtures/cpp_business"
+CPP_BUSINESS_ANDROID_DIR="$CPP_BUSINESS_DIR/build/android/arm64-v8a"
 OUT_DIR="${1:-native-bridge-smoke-build}"
 APK_OUT="${2:-native-bridge-smoke.apk}"
 PACKAGE_NAME="com.smlc666.nativebridgesmoke"
@@ -50,26 +53,54 @@ find_tool() {
     command -v "$tool"
 }
 
+require_file() {
+    file_path="$1"
+    if [ ! -f "$file_path" ]; then
+        printf '[native-bridge-harness] ERROR: missing required file: %s\n' "$file_path" >&2
+        exit 1
+    fi
+}
+
+ensure_sdk_component() {
+    marker="$1"
+    shift
+    if [ -e "$marker" ]; then
+        return 0
+    fi
+    if [ -z "${SDKMANAGER:-}" ]; then
+        printf '[native-bridge-harness] ERROR: sdkmanager unavailable and missing %s\n' "$marker" >&2
+        exit 1
+    fi
+    yes | "$SDKMANAGER" --licenses >/dev/null
+    "$SDKMANAGER" --install "$@" >/dev/null
+}
+
 SDK_ROOT=$(find_sdk_root)
 SDKMANAGER=$(find_sdkmanager)
 ANDROID_JAR="$SDK_ROOT/platforms/$PLATFORM/android.jar"
 NDK_ROOT="$SDK_ROOT/ndk/$NDK_VERSION"
-CLANG="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang"
 
 export ANDROID_SDK_ROOT="$SDK_ROOT"
 export ANDROID_HOME="$SDK_ROOT"
+export ANDROID_NDK_HOME="$NDK_ROOT"
 
-yes | "$SDKMANAGER" --licenses >/dev/null
-"$SDKMANAGER" --install \
-    "platform-tools" \
-    "platforms;$PLATFORM" \
-    "build-tools;$BUILD_TOOLS_VERSION" \
-    "ndk;$NDK_VERSION" >/dev/null
+ensure_sdk_component "$ANDROID_JAR" "platforms;$PLATFORM"
+ensure_sdk_component "$SDK_ROOT/build-tools/$BUILD_TOOLS_VERSION/aapt" "build-tools;$BUILD_TOOLS_VERSION"
+ensure_sdk_component "$NDK_ROOT" "ndk;$NDK_VERSION"
 
 AAPT=$(find_tool aapt)
 APKSIGNER=$(find_tool apksigner)
 D8=$(find_tool d8)
 ZIPALIGN=$(find_tool zipalign)
+
+if [ ! -d "$CPP_BUSINESS_DIR" ]; then
+    printf '[native-bridge-harness] ERROR: private cpp_business fixture not found at %s\n' "$CPP_BUSINESS_DIR" >&2
+    exit 1
+fi
+
+bash "$CPP_BUSINESS_DIR/build.sh" --android-arm64
+require_file "$CPP_BUSINESS_ANDROID_DIR/libcpp_business.so"
+require_file "$CPP_BUSINESS_ANDROID_DIR/libcpp_business_jni.so"
 
 rm -rf "$OUT_DIR"
 mkdir -p \
@@ -90,13 +121,10 @@ jar cf "$OUT_DIR/classes.jar" -C "$OUT_DIR/classes" .
     --output "$OUT_DIR/payload" \
     "$OUT_DIR/classes.jar"
 
-"$CLANG" \
-    -shared \
-    -fPIC \
-    -o "$OUT_DIR/payload/lib/arm64-v8a/libbridge_smoke.so" \
-    "$SRC_DIR/bridge_jni.c" \
-    -I"$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include" \
-    -llog
+cp "$CPP_BUSINESS_ANDROID_DIR/libcpp_business.so" \
+   "$OUT_DIR/payload/lib/arm64-v8a/libcpp_business.so"
+cp "$CPP_BUSINESS_ANDROID_DIR/libcpp_business_jni.so" \
+   "$OUT_DIR/payload/lib/arm64-v8a/libcpp_business_jni.so"
 
 "$AAPT" package \
     -f \
@@ -106,7 +134,11 @@ jar cf "$OUT_DIR/classes.jar" -C "$OUT_DIR/classes" .
 
 (
     cd "$OUT_DIR/payload"
-    "$AAPT" add ../unsigned.apk classes.dex lib/arm64-v8a/libbridge_smoke.so >/dev/null
+    "$AAPT" add \
+        ../unsigned.apk \
+        classes.dex \
+        lib/arm64-v8a/libcpp_business.so \
+        lib/arm64-v8a/libcpp_business_jni.so >/dev/null
 )
 
 keytool \

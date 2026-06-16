@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import pathlib
 import subprocess
 import sys
 import time
@@ -10,6 +11,7 @@ APK = "native-bridge-smoke.apk"
 PACKAGE = "com.smlc666.nativebridgesmoke"
 ACTIVITY = f"{PACKAGE}/.MainActivity"
 TAG = "NativeBridgeSmoke"
+BATTTERY_EXCERPT_LIMIT = 40
 
 
 def adb(*args, timeout=60):
@@ -54,6 +56,56 @@ def write_result(result, exit_code):
     return exit_code
 
 
+def evaluate_smoke_output(logcat_text, tag, work_dir):
+    del work_dir
+    log_lines = [
+        line for line in logcat_text.splitlines()
+        if tag in line or "AndroidRuntime" in line or "linker" in line
+    ]
+    saw_onload = any("JNI_OnLoad reached" in line for line in log_lines)
+    saw_post_load = any("after System.loadLibrary" in line for line in log_lines)
+    saw_on_create = any("MainActivity.onCreate" in line for line in log_lines)
+    saw_battery_begin = any("cpp_business battery begin" in line for line in log_lines)
+    saw_battery_end = any("cpp_business battery end" in line for line in log_lines)
+    battery_lines = []
+    for line in log_lines:
+        if tag not in line:
+            continue
+        _, _, payload = line.partition(f"{tag}:")
+        payload = payload.strip()
+        if payload.startswith("PASS:") or payload.startswith("FAIL:") or payload.startswith("BATTERY-FAILS="):
+            battery_lines.append(payload)
+
+    saw_battery_zero = any(line == "BATTERY-FAILS=0" for line in battery_lines)
+    if not (saw_onload and saw_post_load and saw_on_create and saw_battery_begin and saw_battery_end and saw_battery_zero):
+        missing = []
+        if not saw_onload:
+            missing.append("JNI_OnLoad reached")
+        if not saw_post_load:
+            missing.append("after System.loadLibrary")
+        if not saw_on_create:
+            missing.append("MainActivity.onCreate")
+        if not saw_battery_begin:
+            missing.append("cpp_business battery begin")
+        if not saw_battery_end:
+            missing.append("cpp_business battery end")
+        if not saw_battery_zero:
+            missing.append("BATTERY-FAILS=0")
+        return {
+            "status": "fail",
+            "detail": "native-bridge smoke missing required markers: " + ", ".join(missing),
+            "matching_log_lines": log_lines[-20:],
+            "battery_excerpt": battery_lines[-BATTTERY_EXCERPT_LIMIT:],
+        }
+
+    return {
+        "status": "pass",
+        "matching_log_lines": log_lines[-20:],
+        "battery_excerpt": battery_lines[-BATTTERY_EXCERPT_LIMIT:],
+        "battery_fails": 0,
+    }
+
+
 def main():
     started = time.monotonic()
     try:
@@ -75,15 +127,9 @@ def main():
 
         time.sleep(5)
         logcat = adb("logcat", "-d", timeout=60)
-        log_lines = [
-            line for line in logcat.stdout.splitlines()
-            if TAG in line or "AndroidRuntime" in line or "linker" in line
-        ]
-        saw_onload = any("JNI_OnLoad reached" in line for line in log_lines)
-        saw_post_load = any("after System.loadLibrary" in line for line in log_lines)
-        saw_on_create = any("MainActivity.onCreate" in line for line in log_lines)
-        if not (saw_onload and saw_post_load and saw_on_create):
-            raise RuntimeError("native-bridge harness did not reach JNI_OnLoad + Activity startup")
+        parsed = evaluate_smoke_output(logcat.stdout, TAG, pathlib.Path("."))
+        if parsed["status"] != "pass":
+            raise RuntimeError(parsed["detail"])
 
         result = {
             "status": "pass",
@@ -91,7 +137,9 @@ def main():
             "translation_library": bridge_path,
             "install_output": install.stdout.strip(),
             "start_output": start.stdout.strip(),
-            "matching_log_lines": log_lines[-20:],
+            "matching_log_lines": parsed["matching_log_lines"],
+            "battery_excerpt": parsed["battery_excerpt"],
+            "battery_fails": parsed["battery_fails"],
             "duration_ms": int((time.monotonic() - started) * 1000),
         }
         return write_result(result, 0)

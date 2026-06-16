@@ -104,9 +104,9 @@ report = {
     },
     "scope": {
         "mode": "manual_non_blocking" if os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch" else "nightly_auxiliary_gate",
-        "does_not_validate_arm64_vmp": True,
+        "does_not_validate_general_arm64_vmp_compatibility": True,
         "does_not_replace_bionic_shim_gate": True,
-        "purpose": "Verify x86_64 AVD boot, native-bridge/libndk availability, adb control, and a minimal translated arm64 JNI load smoke.",
+        "purpose": "Verify x86_64 AVD boot, native-bridge/libndk availability, adb control, and a translated cpp_business arm64 Android smoke that ends with BATTERY-FAILS=0.",
     },
     "project_probe": project_probe,
     "native_bridge_smoke": native_bridge_smoke,

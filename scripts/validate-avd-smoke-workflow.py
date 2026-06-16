@@ -91,6 +91,17 @@ def main() -> None:
         raise SystemExit(f"missing native-bridge build script: {NATIVE_BRIDGE_BUILD.relative_to(ROOT)}")
     if not NATIVE_BRIDGE_SMOKE.is_file():
         raise SystemExit(f"missing native-bridge smoke script: {NATIVE_BRIDGE_SMOKE.relative_to(ROOT)}")
+    native_bridge_build_text = NATIVE_BRIDGE_BUILD.read_text(encoding="utf-8")
+    if 'sh "$CPP_BUSINESS_DIR/build.sh" --android-arm64' not in native_bridge_build_text:
+        raise SystemExit("native-bridge build script must invoke the private cpp_business Android build")
+    for needle in ["libcpp_business.so", "libcpp_business_jni.so"]:
+        if needle not in native_bridge_build_text:
+            raise SystemExit(f"native-bridge build script must package {needle}")
+    native_bridge_smoke_text = NATIVE_BRIDGE_SMOKE.read_text(encoding="utf-8")
+    if "BATTERY-FAILS=0" not in native_bridge_smoke_text:
+        raise SystemExit("native-bridge smoke script must require BATTERY-FAILS=0")
+    if "cpp_business battery begin" not in native_bridge_smoke_text or "cpp_business battery end" not in native_bridge_smoke_text:
+        raise SystemExit("native-bridge smoke script must require cpp_business battery begin/end markers")
     project_probe_text = PROJECT_PROBE.read_text(encoding="utf-8")
     if '"native_probe"' not in project_probe_text:
         raise SystemExit("project probe script must emit native_probe details")
