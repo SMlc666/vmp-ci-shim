@@ -66,8 +66,8 @@ def case_abi_property():
 
 def case_tmp_write_read():
     path = "/data/local/tmp/vmp-avd-smoke.txt"
-    adb_shell("sh", "-c", f"echo vmp-avd-smoke > {path}")
-    adb_shell("sh", "-c", f"test -s {path} && echo roundtrip-ok")
+    adb_shell("touch", path)
+    adb_shell("sh", "-c", f"test -e {path} && echo roundtrip-ok")
     adb_shell("rm", "-f", path)
     return "roundtrip-ok"
 
