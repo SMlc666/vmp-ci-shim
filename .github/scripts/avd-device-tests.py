@@ -65,19 +65,13 @@ def case_abi_property():
 
 
 def case_tmp_write_read():
-    expected = "roundtrip-ok"
-    actual = adb_shell(
-        "sh",
-        "-c",
-        "echo vmp-avd-smoke > /data/local/tmp/vmp-avd-smoke.txt "
-        "&& content=$(cat /data/local/tmp/vmp-avd-smoke.txt) "
-        "&& [ \"$content\" = vmp-avd-smoke ] "
-        "&& echo roundtrip-ok "
-        "&& rm /data/local/tmp/vmp-avd-smoke.txt",
-    )
-    if actual != expected:
+    path = "/data/local/tmp/vmp-avd-smoke.txt"
+    adb_shell("sh", "-c", f"echo vmp-avd-smoke > {path}")
+    actual = adb_shell("cat", path)
+    adb_shell("rm", "-f", path)
+    if actual != "vmp-avd-smoke":
         raise RuntimeError(f"tmp roundtrip mismatch: {actual!r}")
-    return actual
+    return "roundtrip-ok"
 
 
 def case_device_shell_script():
