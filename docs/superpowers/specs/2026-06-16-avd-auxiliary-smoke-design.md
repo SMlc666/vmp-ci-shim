@@ -20,7 +20,7 @@ Add an AVD-based auxiliary signal with two operating modes:
 
 ## Architecture
 
-Create a separate `.github/workflows/avd-smoke.yml` workflow. It runs on `ubuntu-latest`, boots an x86_64 Android AVD using `reactivecircus/android-emulator-runner`, collects basic Android runtime properties through `adb`, writes a machine-readable `avd-smoke-report.json`, and uploads the report plus `logcat`. The embedded smoke script stays POSIX-`sh` compatible because the emulator runner executes it through `/usr/bin/sh`.
+Create a separate `.github/workflows/avd-smoke.yml` workflow. It runs on `ubuntu-latest`, boots an x86_64 Android AVD using `reactivecircus/android-emulator-runner`, collects basic Android runtime properties through `adb`, writes a machine-readable `avd-smoke-report.json`, and uploads the report plus `logcat`. The emulator runner invokes only a single POSIX `sh` helper command because the action executes `script:` lines one-by-one through `/usr/bin/sh`.
 
 The workflow clones the private source repository only to bind the smoke result to a target private ref and commit SHA. Manual runs accept `target_ref`; scheduled runs default to `main`.
 

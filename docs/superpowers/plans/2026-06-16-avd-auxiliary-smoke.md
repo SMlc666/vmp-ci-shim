@@ -38,7 +38,7 @@ Use the existing deploy-key pattern from `ci.yml`, clone `PRIVATE_REPO_URL`, che
 
 - [x] **Step 3: Boot AVD and collect report**
 
-Use `reactivecircus/android-emulator-runner@v2` with an x86_64 image, `-accel off`, `-no-metrics`, and a POSIX-`sh` compatible script. Collect SDK, ABI, ABI list, linker64 existence, and write JSON.
+Use `reactivecircus/android-emulator-runner@v2` with an x86_64 image, `-accel off`, `-no-metrics`, and a single POSIX-`sh` helper invocation. Collect SDK, ABI, ABI list, linker64 existence, and write JSON.
 
 - [x] **Step 4: Upload artifacts**
 
@@ -54,6 +54,7 @@ Always upload `avd-smoke-report.json` and `avd-logcat.txt` with 14-day retention
 Run:
 
 ```bash
+python3 scripts/validate-avd-smoke-workflow.py
 python3 - <<'PY'
 import yaml
 yaml.safe_load(open(".github/workflows/avd-smoke.yml", encoding="utf-8"))
