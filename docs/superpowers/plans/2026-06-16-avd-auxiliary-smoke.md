@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add an isolated Android Emulator smoke workflow with manual non-blocking mode and nightly auxiliary-gate mode.
+**Goal:** Add an isolated Android Emulator smoke workflow with manual non-blocking mode and nightly auxiliary-gate mode, and make it run a small device-side smoke test suite.
 
-**Architecture:** Create a new `.github/workflows/avd-smoke.yml` workflow rather than modifying the current `ci.yml`. The workflow resolves a private repo ref, boots an x86_64 AVD, collects adb/runtime facts, writes `avd-smoke-report.json`, and uploads artifacts. Manual runs are job-level `continue-on-error`; scheduled runs fail the standalone workflow when smoke fails.
+**Architecture:** Create a new `.github/workflows/avd-smoke.yml` workflow rather than modifying the current `ci.yml`. The workflow resolves a private repo ref, boots an x86_64 AVD, collects adb/runtime facts, runs device-side smoke tests, writes `avd-smoke-report.json` and `avd-device-tests.json`, and uploads artifacts. Manual runs are job-level `continue-on-error`; scheduled runs fail the standalone workflow when smoke fails.
 
 **Tech Stack:** GitHub Actions, `reactivecircus/android-emulator-runner`, `webfactory/ssh-agent`, bash, adb, Python `PyYAML` for static validation.
 
@@ -40,9 +40,13 @@ Use the existing deploy-key pattern from `ci.yml`, clone `PRIVATE_REPO_URL`, che
 
 Use `reactivecircus/android-emulator-runner@v2` with an x86_64 image, `-accel off`, `-no-metrics`, and a single POSIX-`sh` helper invocation. Collect SDK, ABI, ABI list, linker64 existence, and write JSON.
 
+- [ ] **Step 3b: Run device-side smoke tests**
+
+Check adb device state, property reads, `/data/local/tmp` write/read/remove, and an on-device shell-script execution path. Save the result to `avd-device-tests.json` and include it in the main report.
+
 - [x] **Step 4: Upload artifacts**
 
-Always upload `avd-smoke-report.json` and `avd-logcat.txt` with 14-day retention.
+Always upload `avd-smoke-report.json`, `avd-device-tests.json`, and `avd-logcat.txt` with 14-day retention.
 
 ### Task 3: Validate Workflow
 

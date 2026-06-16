@@ -81,6 +81,7 @@ jobs:
           name: avd-smoke-${{ github.run_id }}
           path: |
             avd-smoke-report.json
+            avd-device-tests.json
             avd-logcat.txt
           retention-days: 14
           if-no-files-found: warn
