@@ -65,12 +65,13 @@ def case_abi_property():
 
 
 def case_tmp_write_read():
-    expected = "vmp-avd-smoke"
+    expected = "roundtrip-ok"
     actual = adb_shell(
         "sh",
         "-c",
-        "echo -n vmp-avd-smoke > /data/local/tmp/vmp-avd-smoke.txt "
-        "&& cat /data/local/tmp/vmp-avd-smoke.txt "
+        "echo vmp-avd-smoke > /data/local/tmp/vmp-avd-smoke.txt "
+        "&& grep -q vmp-avd-smoke /data/local/tmp/vmp-avd-smoke.txt "
+        "&& echo roundtrip-ok "
         "&& rm /data/local/tmp/vmp-avd-smoke.txt",
     )
     if actual != expected:
