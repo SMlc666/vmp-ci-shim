@@ -20,18 +20,21 @@ def main() -> None:
     if "99-kvm4all.rules" not in enable_kvm_run:
         raise SystemExit("Enable KVM step must install the standard udev rule")
 
-    cache_steps = [
-        step for step in steps
-        if step.get("uses", "").startswith("actions/cache@")
-    ]
-    if len(cache_steps) != 1:
-        raise SystemExit(f"expected exactly one actions/cache step, found {len(cache_steps)}")
-    cache_step = cache_steps[0]
+    restore_steps = [step for step in steps if step.get("uses") == "actions/cache/restore@v4"]
+    save_steps = [step for step in steps if step.get("uses") == "actions/cache/save@v4"]
+    if len(restore_steps) != 1:
+        raise SystemExit(f"expected exactly one actions/cache/restore step, found {len(restore_steps)}")
+    if len(save_steps) != 1:
+        raise SystemExit(f"expected exactly one actions/cache/save step, found {len(save_steps)}")
+    cache_step = restore_steps[0]
     if cache_step.get("id") != "avd-cache":
         raise SystemExit("AVD cache step must use id=avd-cache")
     cache_path = str(cache_step.get("with", {}).get("path", ""))
     if "~/.android/avd/*" not in cache_path or "~/.android/adb*" not in cache_path:
         raise SystemExit("AVD cache step must cache ~/.android/avd/* and ~/.android/adb*")
+    save_step = save_steps[0]
+    if save_step.get("if") != "steps.avd-cache.outputs.cache-hit != 'true'":
+        raise SystemExit("AVD cache save step must run only on cache miss")
 
     runner_steps = [
         step for step in steps

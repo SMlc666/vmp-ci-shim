@@ -70,7 +70,8 @@ def case_tmp_write_read():
         "sh",
         "-c",
         "echo vmp-avd-smoke > /data/local/tmp/vmp-avd-smoke.txt "
-        "&& grep -q vmp-avd-smoke /data/local/tmp/vmp-avd-smoke.txt "
+        "&& content=$(cat /data/local/tmp/vmp-avd-smoke.txt) "
+        "&& [ \"$content\" = vmp-avd-smoke ] "
         "&& echo roundtrip-ok "
         "&& rm /data/local/tmp/vmp-avd-smoke.txt",
     )
