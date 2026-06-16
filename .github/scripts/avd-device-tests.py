@@ -69,7 +69,7 @@ def case_tmp_write_read():
     actual = adb_shell(
         "sh",
         "-c",
-        "printf vmp-avd-smoke > /data/local/tmp/vmp-avd-smoke.txt "
+        "echo vmp-avd-smoke > /data/local/tmp/vmp-avd-smoke.txt "
         "&& cat /data/local/tmp/vmp-avd-smoke.txt "
         "&& rm /data/local/tmp/vmp-avd-smoke.txt",
     )
@@ -82,8 +82,8 @@ def case_device_shell_script():
     actual = adb_shell(
         "sh",
         "-c",
-        "printf '%s\\n' '#!/system/bin/sh' 'echo avd-device-test' "
-        "> /data/local/tmp/vmp-avd-device-test.sh "
+        "echo '#!/system/bin/sh' > /data/local/tmp/vmp-avd-device-test.sh "
+        "&& echo 'echo avd-device-test' >> /data/local/tmp/vmp-avd-device-test.sh "
         "&& sh /data/local/tmp/vmp-avd-device-test.sh "
         "&& rm /data/local/tmp/vmp-avd-device-test.sh",
     )
