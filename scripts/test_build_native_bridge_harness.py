@@ -29,6 +29,11 @@ class BuildNativeBridgeHarnessTest(unittest.TestCase):
             text,
             "builder must package libcpp_business_jni.so into the APK payload",
         )
+        self.assertIn(
+            "libc++_shared.so",
+            text,
+            "builder must package the Android C++ runtime needed by the translated JNI libraries",
+        )
         self.assertNotIn(
             "bridge_jni.c",
             text,

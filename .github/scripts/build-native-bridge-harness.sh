@@ -79,6 +79,7 @@ SDK_ROOT=$(find_sdk_root)
 SDKMANAGER=$(find_sdkmanager)
 ANDROID_JAR="$SDK_ROOT/platforms/$PLATFORM/android.jar"
 NDK_ROOT="$SDK_ROOT/ndk/$NDK_VERSION"
+ANDROID_STL="$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so"
 
 export ANDROID_SDK_ROOT="$SDK_ROOT"
 export ANDROID_HOME="$SDK_ROOT"
@@ -101,6 +102,7 @@ fi
 bash "$CPP_BUSINESS_DIR/build.sh" --android-arm64
 require_file "$CPP_BUSINESS_ANDROID_DIR/libcpp_business.so"
 require_file "$CPP_BUSINESS_ANDROID_DIR/libcpp_business_jni.so"
+require_file "$ANDROID_STL"
 
 rm -rf "$OUT_DIR"
 mkdir -p \
@@ -125,6 +127,8 @@ cp "$CPP_BUSINESS_ANDROID_DIR/libcpp_business.so" \
    "$OUT_DIR/payload/lib/arm64-v8a/libcpp_business.so"
 cp "$CPP_BUSINESS_ANDROID_DIR/libcpp_business_jni.so" \
    "$OUT_DIR/payload/lib/arm64-v8a/libcpp_business_jni.so"
+cp "$ANDROID_STL" \
+   "$OUT_DIR/payload/lib/arm64-v8a/libc++_shared.so"
 
 "$AAPT" package \
     -f \
@@ -137,6 +141,7 @@ cp "$CPP_BUSINESS_ANDROID_DIR/libcpp_business_jni.so" \
     "$AAPT" add \
         ../unsigned.apk \
         classes.dex \
+        lib/arm64-v8a/libc++_shared.so \
         lib/arm64-v8a/libcpp_business.so \
         lib/arm64-v8a/libcpp_business_jni.so >/dev/null
 )
