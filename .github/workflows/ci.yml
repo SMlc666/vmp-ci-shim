@@ -663,7 +663,7 @@ jobs:
     # outcome survives via the job's exposed `outputs.result` field — that's
     # what we gate on for bionic.
     needs: [private_glibc, private_bionic]
-    if: needs.private_glibc.result == 'failure' || needs.private_bionic.outputs.result == 'failure'
+    if: ${{ always() && (needs.private_glibc.result == 'failure' || needs.private_bionic.outputs.result == 'failure') }}
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Send Telegram alert
