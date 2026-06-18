@@ -21,7 +21,7 @@ RUN PREFIX=/data/data/com.termux/files/usr && \
     mkdir -p /data/data/com.termux/cache/apt/archives/partial && \
     mkdir -p /data/data/com.termux/cache/apt/lists/partial && \
     "$PREFIX/bin/apt" update -y && \
-    "$PREFIX/bin/apt" install -y rust git tcl curl unzip perl make clang tar && \
+    "$PREFIX/bin/apt" install -y rust git tcl curl unzip perl make clang cmake tar && \
     mkdir -p "$PREFIX/realib-sqlite" && cd "$PREFIX/realib-sqlite" && \
     "$PREFIX/bin/curl" -fSL -x "$BUILD_PROXY" -o amalg.zip \
       "https://www.sqlite.org/2024/sqlite-amalgamation-3450300.zip" && \

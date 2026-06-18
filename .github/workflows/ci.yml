@@ -102,7 +102,9 @@ jobs:
           path: |
             /tmp/sqlite-amalgamation-3450300
             /tmp/openssl-1.1.1w
-          key: realib-extdeps-glibc-v1
+            /tmp/yaml-cpp-0.9.0
+            /tmp/protobuf-31.1
+          key: realib-extdeps-glibc-v3
 
       - name: Precompile realib e2e binaries (glibc)
         if: always()
@@ -110,6 +112,8 @@ jobs:
         run: |
           CC=gcc cargo test -p vmp-lifter --test realib_sqlite_e2e --no-run
           CC=gcc cargo test -p vmp-lifter --test realib_libcrypto_e2e --no-run
+          CC=gcc cargo test -p vmp-lifter --test realib_yamlcpp_e2e --no-run
+          CC=gcc cargo test -p vmp-lifter --test realib_protobuflite_e2e --no-run
 
       - name: Real-lib suite e2e (glibc)
         if: always()
@@ -129,10 +133,28 @@ jobs:
             cp /tmp/openssl-install/lib/libcrypto.so* "${OPENSSL_DIR}/"
           fi
           export OPENSSL_DIR
+          YAMLCPP_SRC_DIR=/tmp/yaml-cpp-0.9.0
+          if [[ ! -f "${YAMLCPP_SRC_DIR}/include/yaml-cpp/yaml.h" ]]; then
+            rm -rf "${YAMLCPP_SRC_DIR}"
+            mkdir -p "${YAMLCPP_SRC_DIR}"
+            curl -L https://github.com/jbeder/yaml-cpp/archive/refs/tags/yaml-cpp-0.9.0.tar.gz -o /tmp/yamlcpp.tar.gz
+            tar xzf /tmp/yamlcpp.tar.gz -C "${YAMLCPP_SRC_DIR}" --strip-components=1
+          fi
+          export YAMLCPP_SRC_DIR
+          PROTOBUF_SRC_DIR=/tmp/protobuf-31.1
+          if [[ ! -f "${PROTOBUF_SRC_DIR}/src/google/protobuf/message_lite.h" ]]; then
+            rm -rf "${PROTOBUF_SRC_DIR}"
+            mkdir -p "${PROTOBUF_SRC_DIR}"
+            curl -L https://github.com/protocolbuffers/protobuf/archive/refs/tags/v31.1.tar.gz -o /tmp/protobuf-v31.1.tar.gz
+            tar xzf /tmp/protobuf-v31.1.tar.gz -C "${PROTOBUF_SRC_DIR}" --strip-components=1
+          fi
+          export PROTOBUF_SRC_DIR
           export CC=gcc
           cd src
           cargo test -p vmp-lifter --test realib_sqlite_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
           cargo test -p vmp-lifter --test realib_libcrypto_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
+          cargo test -p vmp-lifter --test realib_yamlcpp_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
+          cargo test -p vmp-lifter --test realib_protobuflite_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
 
       - name: Check glibc realib gate
         if: always()
@@ -144,10 +166,16 @@ jobs:
           # which fails the gate rather than silently greenlighting it.
           sqlite_ratio=$(grep -oP '\[realib_sqlite\] surviving_pass_ratio = \K[0-9]+\.[0-9]+' /tmp/test.log | tail -1)
           libcrypto_ratio=$(grep -oP '\[realib_libcrypto\] surviving_pass_ratio = \K[0-9]+\.[0-9]+' /tmp/test.log | tail -1)
+          yamlcpp_ratio=$(grep -oP '\[realib_yamlcpp\] surviving_pass_ratio = \K[0-9]+\.[0-9]+' /tmp/test.log | tail -1)
+          protobuflite_ratio=$(grep -oP '\[realib_protobuflite\] surviving_pass_ratio = \K[0-9]+\.[0-9]+' /tmp/test.log | tail -1)
           sqlite_ratio="${sqlite_ratio:-0.0}"
           libcrypto_ratio="${libcrypto_ratio:-0.0}"
+          yamlcpp_ratio="${yamlcpp_ratio:-0.0}"
+          protobuflite_ratio="${protobuflite_ratio:-0.0}"
           echo "sqlite    surviving_pass_ratio = $sqlite_ratio"
           echo "libcrypto surviving_pass_ratio = $libcrypto_ratio"
+          echo "yamlcpp   surviving_pass_ratio = $yamlcpp_ratio"
+          echo "protobuf  surviving_pass_ratio = $protobuflite_ratio"
           gate_fail=0
           if awk "BEGIN {exit !($sqlite_ratio >= 1.0)}"; then
             echo "SQLITE GATE PASS"
@@ -161,6 +189,18 @@ jobs:
             echo "LIBCRYPTO GATE FAIL: ratio=$libcrypto_ratio < 1.0"
             gate_fail=1
           fi
+          if awk "BEGIN {exit !($yamlcpp_ratio >= 1.0)}"; then
+            echo "YAMLCPP GATE PASS"
+          else
+            echo "YAMLCPP GATE FAIL: ratio=$yamlcpp_ratio < 1.0"
+            gate_fail=1
+          fi
+          if awk "BEGIN {exit !($protobuflite_ratio >= 1.0)}"; then
+            echo "PROTOBUFLITE GATE PASS"
+          else
+            echo "PROTOBUFLITE GATE FAIL: ratio=$protobuflite_ratio < 1.0"
+            gate_fail=1
+          fi
           if [ "$gate_fail" -ne 0 ]; then exit 1; fi
 
       - name: Save realib fixtures cache (glibc)
@@ -170,7 +210,9 @@ jobs:
           path: |
             /tmp/sqlite-amalgamation-3450300
             /tmp/openssl-1.1.1w
-          key: realib-extdeps-glibc-v1
+            /tmp/yaml-cpp-0.9.0
+            /tmp/protobuf-31.1
+          key: realib-extdeps-glibc-v3
 
       - name: Save eh_fixture cache (glibc)
         if: always()
@@ -197,7 +239,7 @@ jobs:
       # ALSO bump the bionic-userland cache key string below
       # (`bionic-userland-vN-image-vM`) to match, otherwise stale
       # userland tarball will be served from cache and ignore the new image.
-      BIONIC_IMAGE: ghcr.io/smlc666/termux-rust:v4
+      BIONIC_IMAGE: ghcr.io/smlc666/termux-rust:v5
     steps:
       - uses: webfactory/ssh-agent@v0.9.0
         with:
@@ -233,7 +275,7 @@ jobs:
           path: /tmp/bionic-userland.tar
           # Cache key is tied to the image tag only — ci.yml edits no longer
           # invalidate. Bump BIONIC_IMAGE tag → bump cache key string here.
-          key: bionic-userland-v6-image-v4
+          key: bionic-userland-v7-image-v5
 
       - name: Log in to ghcr.io
         if: steps.bionic-cache.outputs.cache-hit != 'true'
@@ -276,7 +318,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: /tmp/bionic-userland.tar
-          key: bionic-userland-v6-image-v4
+          key: bionic-userland-v7-image-v5
 
       - name: Restore bionic userland (cache hit)
         if: steps.bionic-cache.outputs.cache-hit == 'true'
@@ -318,7 +360,9 @@ jobs:
           path: |
             /tmp/sqlite-amalgamation-3450300
             /tmp/openssl-1.1.1w
-          key: realib-extdeps-bionic-v1
+            /tmp/yaml-cpp-0.9.0
+            /tmp/protobuf-31.1
+          key: realib-extdeps-bionic-v2
 
       - id: test
         name: Run cargo test against bionic
@@ -392,8 +436,10 @@ jobs:
           cd src
           "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_sqlite_e2e --no-run
           "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_libcrypto_e2e --no-run
+          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_yamlcpp_e2e --no-run
+          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_protobuflite_e2e --no-run
 
-      - name: Real-lib suite e2e (libsqlite + libcrypto, bionic)
+      - name: Real-lib suite e2e (sqlite + libcrypto + yamlcpp + protobuflite, bionic)
         # The main --workspace run bails fast on the lib binary's known Cat 2B
         # failures, so the integration binary never runs there. Run it
         # standalone (precompiled above). if: always() because the main
@@ -443,12 +489,32 @@ jobs:
           fi
           export OPENSSL_DIR
 
+          YAMLCPP_SRC_DIR=/tmp/yaml-cpp-0.9.0
+          if [[ ! -f "${YAMLCPP_SRC_DIR}/include/yaml-cpp/yaml.h" ]]; then
+            rm -rf "${YAMLCPP_SRC_DIR}"
+            mkdir -p "${YAMLCPP_SRC_DIR}"
+            curl -L https://github.com/jbeder/yaml-cpp/archive/refs/tags/yaml-cpp-0.9.0.tar.gz -o /tmp/yamlcpp.tar.gz
+            tar xzf /tmp/yamlcpp.tar.gz -C "${YAMLCPP_SRC_DIR}" --strip-components=1
+          fi
+          export YAMLCPP_SRC_DIR
+
+          PROTOBUF_SRC_DIR=/tmp/protobuf-31.1
+          if [[ ! -f "${PROTOBUF_SRC_DIR}/src/google/protobuf/message_lite.h" ]]; then
+            rm -rf "${PROTOBUF_SRC_DIR}"
+            mkdir -p "${PROTOBUF_SRC_DIR}"
+            curl -L https://github.com/protocolbuffers/protobuf/archive/refs/tags/v31.1.tar.gz -o /tmp/protobuf-v31.1.tar.gz
+            tar xzf /tmp/protobuf-v31.1.tar.gz -C "${PROTOBUF_SRC_DIR}" --strip-components=1
+          fi
+          export PROTOBUF_SRC_DIR
+
           export CC="$TERMUX_PREFIX/bin/clang"
           cd src
           # `|| true`: each adapter is an independent indicator; a failing one
           # (e.g. surfaced Cat 2B) must not abort the step before the next runs.
           "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_sqlite_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
           "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_libcrypto_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
+          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_yamlcpp_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
+          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_protobuflite_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
 
       - name: Check bionic realib gate
         if: always()
@@ -460,10 +526,16 @@ jobs:
           # which fails the gate rather than silently greenlighting it.
           sqlite_ratio=$(grep -oP '\[realib_sqlite\] surviving_pass_ratio = \K[0-9]+\.[0-9]+' /tmp/test.log | tail -1)
           libcrypto_ratio=$(grep -oP '\[realib_libcrypto\] surviving_pass_ratio = \K[0-9]+\.[0-9]+' /tmp/test.log | tail -1)
+          yamlcpp_ratio=$(grep -oP '\[realib_yamlcpp\] surviving_pass_ratio = \K[0-9]+\.[0-9]+' /tmp/test.log | tail -1)
+          protobuflite_ratio=$(grep -oP '\[realib_protobuflite\] surviving_pass_ratio = \K[0-9]+\.[0-9]+' /tmp/test.log | tail -1)
           sqlite_ratio="${sqlite_ratio:-0.0}"
           libcrypto_ratio="${libcrypto_ratio:-0.0}"
+          yamlcpp_ratio="${yamlcpp_ratio:-0.0}"
+          protobuflite_ratio="${protobuflite_ratio:-0.0}"
           echo "sqlite    surviving_pass_ratio = $sqlite_ratio"
           echo "libcrypto surviving_pass_ratio = $libcrypto_ratio"
+          echo "yamlcpp   surviving_pass_ratio = $yamlcpp_ratio"
+          echo "protobuf  surviving_pass_ratio = $protobuflite_ratio"
           gate_fail=0
           if awk "BEGIN {exit !($sqlite_ratio >= 1.0)}"; then
             echo "SQLITE GATE PASS"
@@ -477,6 +549,18 @@ jobs:
             echo "LIBCRYPTO GATE FAIL: ratio=$libcrypto_ratio < 1.0"
             gate_fail=1
           fi
+          if awk "BEGIN {exit !($yamlcpp_ratio >= 1.0)}"; then
+            echo "YAMLCPP GATE PASS"
+          else
+            echo "YAMLCPP GATE FAIL: ratio=$yamlcpp_ratio < 1.0"
+            gate_fail=1
+          fi
+          if awk "BEGIN {exit !($protobuflite_ratio >= 1.0)}"; then
+            echo "PROTOBUFLITE GATE PASS"
+          else
+            echo "PROTOBUFLITE GATE FAIL: ratio=$protobuflite_ratio < 1.0"
+            gate_fail=1
+          fi
           if [ "$gate_fail" -ne 0 ]; then exit 1; fi
 
       - name: Save realib fixtures cache (bionic)
@@ -486,7 +570,9 @@ jobs:
           path: |
             /tmp/sqlite-amalgamation-3450300
             /tmp/openssl-1.1.1w
-          key: realib-extdeps-bionic-v1
+            /tmp/yaml-cpp-0.9.0
+            /tmp/protobuf-31.1
+          key: realib-extdeps-bionic-v2
 
       - name: Oracle Cat 2B litmus (bionic)
         # Proof the three-way differential oracle auto-classifies mba_smoke as
