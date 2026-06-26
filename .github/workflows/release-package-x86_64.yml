@@ -1,0 +1,82 @@
+name: x86_64 release package
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: "Commit SHA to package"
+        required: true
+        type: string
+      branch:
+        description: "Branch name (for context)"
+        required: false
+        type: string
+        default: "main"
+
+concurrency:
+  group: release-package-${{ github.event.inputs.commit_sha }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_KEY }}
+
+      - name: Trust GitHub host key
+        run: ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
+
+      - name: Clone & checkout
+        run: |
+          git clone --depth 50 "$PRIVATE_REPO_URL" src
+          cd src
+          git fetch origin "${{ inputs.commit_sha }}" --depth 50
+          git checkout "${{ inputs.commit_sha }}"
+        env:
+          PRIVATE_REPO_URL: ${{ secrets.PRIVATE_REPO_URL }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install packaging tools
+        run: sudo apt-get update && sudo apt-get install -y p7zip-full
+
+      - name: Build release binaries
+        working-directory: src
+        run: cargo build --workspace --release --bins
+
+      - name: Assemble package
+        working-directory: src
+        run: |
+          set -euo pipefail
+          pkg_dir="$PWD/target/release/android_vmp-release-x86_64"
+          rm -rf "$pkg_dir"
+          mkdir -p "$pkg_dir/bin"
+
+          for bin in vmp-lifter vmp-runner vmp-bench maps_dumper lift_bench; do
+            cp "target/release/$bin" "$pkg_dir/bin/$bin"
+          done
+          cp release/USAGE.md "$pkg_dir/USAGE.md"
+
+          (cd "$pkg_dir/.." && sha256sum android_vmp-release-x86_64/bin/* android_vmp-release-x86_64/USAGE.md > android_vmp-release-x86_64/SHA256SUMS)
+
+      - name: Create encrypted zip
+        working-directory: src/target/release
+        env:
+          RELEASE_ZIP_PASSWORD: ${{ secrets.RELEASE_ZIP_PASSWORD }}
+        run: |
+          set -euo pipefail
+          zip_name="android_vmp-release-x86_64.zip"
+          rm -f "$zip_name"
+          7z a -tzip -mhe=on -p"$RELEASE_ZIP_PASSWORD" "$zip_name" android_vmp-release-x86_64 >/dev/null
+          sha256sum "$zip_name" | tee "${zip_name}.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android_vmp-release-x86_64-${{ inputs.commit_sha }}
+          path: |
+            src/target/release/android_vmp-release-x86_64.zip
+            src/target/release/android_vmp-release-x86_64.zip.sha256
+          if-no-files-found: error
+          retention-days: 14
