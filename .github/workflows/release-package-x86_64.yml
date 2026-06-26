@@ -69,7 +69,7 @@ jobs:
           set -euo pipefail
           zip_name="android_vmp-release-x86_64.zip"
           rm -f "$zip_name"
-          7z a -tzip -mhe=on -p"$RELEASE_ZIP_PASSWORD" "$zip_name" android_vmp-release-x86_64 >/dev/null
+          7z a -tzip -mem=AES256 -p"$RELEASE_ZIP_PASSWORD" "$zip_name" android_vmp-release-x86_64 >/dev/null
           sha256sum "$zip_name" | tee "${zip_name}.sha256"
 
       - uses: actions/upload-artifact@v4
