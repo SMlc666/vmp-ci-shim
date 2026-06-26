@@ -236,11 +236,11 @@ jobs:
       TERMUX_HOME: /data/data/com.termux/files/home
       # Pre-baked image with rust + git pre-installed. Bump the tag when
       # the Dockerfile changes (and rebuild via build-bionic-image.yml).
-      # ALSO bump the bionic-userland cache key string below
-      # (`bionic-userland-vN-image-vM`) to match, otherwise stale
-      # userland tarball will be served from cache and ignore the new image.
       BIONIC_IMAGE: ghcr.io/smlc666/termux-rust:v5
+      BIONIC_CACHE_VERSION: v8-image-v5
     steps:
+      - uses: actions/checkout@v4
+
       - uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.DEPLOY_KEY }}
@@ -273,9 +273,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: /tmp/bionic-userland.tar
-          # Cache key is tied to the image tag only — ci.yml edits no longer
-          # invalidate. Bump BIONIC_IMAGE tag → bump cache key string here.
-          key: bionic-userland-v7-image-v5
+          key: bionic-userland-${{ env.BIONIC_CACHE_VERSION }}-${{ hashFiles('docker/Dockerfile') }}
 
       - name: Log in to ghcr.io
         if: steps.bionic-cache.outputs.cache-hit != 'true'
@@ -318,7 +316,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: /tmp/bionic-userland.tar
-          key: bionic-userland-v7-image-v5
+          key: bionic-userland-${{ env.BIONIC_CACHE_VERSION }}-${{ hashFiles('docker/Dockerfile') }}
 
       - name: Restore bionic userland (cache hit)
         if: steps.bionic-cache.outputs.cache-hit == 'true'
@@ -335,8 +333,9 @@ jobs:
       - name: Restore cargo cache (bionic)
         # Caches ~/.cargo/registry, ~/.cargo/git, and CARGO_TARGET_DIR
         # ($HOME/target, redirected away from $HOME/src/target so cp -r doesn't
-        # collide). Key tied to Cargo.lock hash; restore-keys gives partial
-        # match for incremental compile when Cargo.lock changes.
+        # collide). Exact key includes the private commit so restored target
+        # output never pins stale binaries across commits; restore-keys still
+        # gives same-lockfile incremental compile warm starts.
         id: cargo-cache
         uses: actions/cache/restore@v4
         with:
@@ -344,8 +343,9 @@ jobs:
             /data/data/com.termux/files/home/.cargo/registry
             /data/data/com.termux/files/home/.cargo/git
             /data/data/com.termux/files/home/target
-          key: cargo-bionic-${{ hashFiles('src/Cargo.lock') }}
+          key: cargo-bionic-${{ hashFiles('src/Cargo.lock') }}-${{ inputs.commit_sha }}
           restore-keys: |
+            cargo-bionic-${{ hashFiles('src/Cargo.lock') }}-
             cargo-bionic-
 
       - name: Restore eh_fixture cache (bionic)
@@ -610,7 +610,7 @@ jobs:
             /data/data/com.termux/files/home/.cargo/registry
             /data/data/com.termux/files/home/.cargo/git
             /data/data/com.termux/files/home/target
-          key: cargo-bionic-${{ hashFiles('src/Cargo.lock') }}
+          key: cargo-bionic-${{ hashFiles('src/Cargo.lock') }}-${{ inputs.commit_sha }}
 
       - name: Save eh_fixture cache (bionic)
         if: always()
@@ -625,7 +625,7 @@ jobs:
           name: test-log-bionic-${{ inputs.commit_sha }}
           path: /tmp/test.log
           retention-days: 7
-          if-no-files-found: warn
+          if-no-files-found: error
 
       # Cat 2B diagnostic (2026-05-25): upload the per-test e2e fixture
       # outputs (orig.so + protected.so + packed.so) so we can compare
@@ -639,14 +639,23 @@ jobs:
         shell: bash
         run: |
           set -e
-          E2E_DIR=/data/data/com.termux/files/home/src/vmp-lifter/fixtures/e2e
-          if [ -d "$E2E_DIR" ]; then
-            cd /data/data/com.termux/files/home/src/vmp-lifter/fixtures
-            tar czf /tmp/e2e-fixtures-bionic.tar.gz e2e/
-            ls -lh /tmp/e2e-fixtures-bionic.tar.gz
+          E2E_DIR=src/vmp-lifter/fixtures/e2e
+          mkdir -p /tmp/bionic-diagnostics
+          cp /tmp/test.log /tmp/bionic-diagnostics/test.log
+          if [ -x "$TERMUX_HOME/target/debug/vmp-runner" ]; then
+            cp -a "$TERMUX_HOME/target/debug/vmp-runner" /tmp/bionic-diagnostics/vmp-runner
           else
-            echo "[diagnostic] e2e fixtures dir not present (no tests reached file-emit stage)" >&2
+            echo "FATAL: bionic vmp-runner missing at $TERMUX_HOME/target/debug/vmp-runner" >&2
+            exit 1
           fi
+          if [ ! -d "$E2E_DIR" ]; then
+            echo "FATAL: e2e fixtures dir missing at $E2E_DIR" >&2
+            exit 1
+          fi
+          find "$E2E_DIR" -maxdepth 2 -type f \( -name '*.so' -o -name '*.json' -o -name '*.txt' -o -name '*.log' \) | sort | head -200
+          tar czf /tmp/bionic-diagnostics/e2e-fixtures.tar.gz -C src/vmp-lifter/fixtures e2e/
+          tar czf /tmp/e2e-fixtures-bionic.tar.gz -C /tmp bionic-diagnostics
+          ls -lh /tmp/e2e-fixtures-bionic.tar.gz
 
       - if: failure()
         uses: actions/upload-artifact@v4
@@ -654,7 +663,7 @@ jobs:
           name: e2e-fixtures-bionic-${{ inputs.commit_sha }}
           path: /tmp/e2e-fixtures-bionic.tar.gz
           retention-days: 7
-          if-no-files-found: warn
+          if-no-files-found: error
 
   notify_failure:
     # Fire on glibc OR bionic failure.
