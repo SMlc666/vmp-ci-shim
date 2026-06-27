@@ -34,6 +34,50 @@ class BionicDiagnosticsWorkflowTest(unittest.TestCase):
             "bionic userland cache key must change when the baked image recipe changes",
         )
 
+    def test_realib_extdeps_cache_keys_track_sources(self) -> None:
+        self.assertIn(
+            "key: realib-extdeps-glibc-v4-${{ hashFiles('src/tests/realib_fixtures/**', 'src/vmp-lifter/tests/realib_*', 'src/vmp-lifter/tests/realib_common/**') }}",
+            self.text,
+            "glibc realib extdeps cache must refresh when fixture recipes or suite code change",
+        )
+        self.assertIn(
+            "key: realib-extdeps-bionic-v3-${{ hashFiles('docker/Dockerfile', 'src/tests/realib_fixtures/**', 'src/vmp-lifter/tests/realib_*', 'src/vmp-lifter/tests/realib_common/**') }}",
+            self.text,
+            "bionic realib extdeps cache must refresh when fixture recipes, suite code, or baked image source changes",
+        )
+        self.assertNotIn(
+            "key: realib-extdeps-bionic-v2\n",
+            self.text,
+            "bionic realib extdeps cache must not be pinned to a static stale key",
+        )
+        self.assertNotIn(
+            "key: realib-extdeps-glibc-v3\n",
+            self.text,
+            "glibc realib extdeps cache must not be pinned to a static stale key",
+        )
+
+    def test_bionic_host_toolchain_wrappers_clear_ld_library_path(self) -> None:
+        self.assertIn(
+            "Create LD-clean host compiler wrappers (bionic)",
+            self.text,
+            "bionic CI must install host compiler wrappers before cargo test",
+        )
+        self.assertIn(
+            "for tool in aarch64-linux-gnu-gcc aarch64-linux-gnu-g++ gcc g++ cc c++ clang clang++; do",
+            self.text,
+            "wrapper must cover host cross compilers that tests may spawn",
+        )
+        self.assertIn(
+            "unset LD_LIBRARY_PATH",
+            self.text,
+            "host compiler wrappers must not inherit Termux library paths",
+        )
+        self.assertIn(
+            'export PATH="$TERMUX_PREFIX/bin:/tmp/host-toolchain-cleanbin:$PATH"',
+            self.text,
+            "Termux tools must stay first while host fallbacks run through LD-clean wrappers",
+        )
+
     def test_failed_bionic_run_uploads_real_fixture_tarball(self) -> None:
         self.assertIn(
             "E2E_DIR=src/vmp-lifter/fixtures/e2e",
