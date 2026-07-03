@@ -102,20 +102,24 @@ jobs:
           path: |
             /tmp/sqlite-amalgamation-3450300
             /tmp/openssl-1.1.1w
+            /tmp/zlib-1.3.1
             /tmp/yaml-cpp-0.9.0
             /tmp/protobuf-31.1
-          key: realib-extdeps-glibc-v4-${{ hashFiles('src/tests/realib_fixtures/**', 'src/vmp-lifter/tests/realib_*', 'src/vmp-lifter/tests/realib_common/**') }}
+          key: realib-extdeps-glibc-v5-${{ hashFiles('src/tests/realib_fixtures/**', 'src/vmp-lifter/tests/realib_*', 'src/vmp-lifter/tests/realib_common/**') }}
 
       - name: Precompile realib e2e binaries (glibc)
         if: always()
         working-directory: src
         run: |
+          CC=gcc cargo test -p vmp-lifter --test realib_tinylib_e2e --no-run
           CC=gcc cargo test -p vmp-lifter --test realib_sqlite_e2e --no-run
           CC=gcc cargo test -p vmp-lifter --test realib_libcrypto_e2e --no-run
+          CC=gcc cargo test -p vmp-lifter --test realib_libz_e2e --no-run
           CC=gcc cargo test -p vmp-lifter --test realib_yamlcpp_e2e --no-run
           CC=gcc cargo test -p vmp-lifter --test realib_protobuflite_e2e --no-run
+          CC=gcc cargo test -p vmp-lifter --test realib_cpp_business_e2e --no-run
 
-      - name: Real-lib suite e2e (glibc)
+      - name: Real-lib suite e2e (all suites, glibc)
         if: always()
         run: |
           export VMP_REALIB_E2E=1
@@ -133,6 +137,14 @@ jobs:
             cp /tmp/openssl-install/lib/libcrypto.so* "${OPENSSL_DIR}/"
           fi
           export OPENSSL_DIR
+          ZLIB_SRC_DIR=/tmp/zlib-1.3.1
+          if [[ ! -f "${ZLIB_SRC_DIR}/zlib.h" ]]; then
+            rm -rf "${ZLIB_SRC_DIR}"
+            mkdir -p "${ZLIB_SRC_DIR}"
+            curl -L https://zlib.net/zlib-1.3.1.tar.gz -o /tmp/zlib-1.3.1.tar.gz
+            tar xzf /tmp/zlib-1.3.1.tar.gz -C "${ZLIB_SRC_DIR}" --strip-components=1
+          fi
+          export ZLIB_SRC_DIR
           YAMLCPP_SRC_DIR=/tmp/yaml-cpp-0.9.0
           if [[ ! -f "${YAMLCPP_SRC_DIR}/include/yaml-cpp/yaml.h" ]]; then
             rm -rf "${YAMLCPP_SRC_DIR}"
@@ -151,56 +163,33 @@ jobs:
           export PROTOBUF_SRC_DIR
           export CC=gcc
           cd src
+          cargo test -p vmp-lifter --test realib_tinylib_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
           cargo test -p vmp-lifter --test realib_sqlite_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
           cargo test -p vmp-lifter --test realib_libcrypto_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
+          cargo test -p vmp-lifter --test realib_libz_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
           cargo test -p vmp-lifter --test realib_yamlcpp_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
           cargo test -p vmp-lifter --test realib_protobuflite_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
+          cargo test -p vmp-lifter --test realib_cpp_business_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
 
       - name: Check glibc realib gate
         if: always()
         run: |
-          # Explicit per-suite extraction — each suite emits exactly one
-          # `[realib_<suite>] surviving_pass_ratio = X.XXX (…)` line per run.
-          # Use PCRE \K to return only the number. Default to 0.0 when a
-          # suite emitted no ratio line (binary crashed before gate emit),
-          # which fails the gate rather than silently greenlighting it.
-          sqlite_ratio=$(grep -oP '\[realib_sqlite\] surviving_pass_ratio = \K[0-9]+\.[0-9]+' /tmp/test.log | tail -1)
-          libcrypto_ratio=$(grep -oP '\[realib_libcrypto\] surviving_pass_ratio = \K[0-9]+\.[0-9]+' /tmp/test.log | tail -1)
-          yamlcpp_ratio=$(grep -oP '\[realib_yamlcpp\] surviving_pass_ratio = \K[0-9]+\.[0-9]+' /tmp/test.log | tail -1)
-          protobuflite_ratio=$(grep -oP '\[realib_protobuflite\] surviving_pass_ratio = \K[0-9]+\.[0-9]+' /tmp/test.log | tail -1)
-          sqlite_ratio="${sqlite_ratio:-0.0}"
-          libcrypto_ratio="${libcrypto_ratio:-0.0}"
-          yamlcpp_ratio="${yamlcpp_ratio:-0.0}"
-          protobuflite_ratio="${protobuflite_ratio:-0.0}"
-          echo "sqlite    surviving_pass_ratio = $sqlite_ratio"
-          echo "libcrypto surviving_pass_ratio = $libcrypto_ratio"
-          echo "yamlcpp   surviving_pass_ratio = $yamlcpp_ratio"
-          echo "protobuf  surviving_pass_ratio = $protobuflite_ratio"
+          # Default to 0.0 when a suite emitted no ratio line (binary crashed
+          # before gate emit), which fails the gate instead of silently passing.
+          suites=(tinylib sqlite libcrypto libz yamlcpp protobuflite cpp_business)
           gate_fail=0
-          if awk "BEGIN {exit !($sqlite_ratio >= 1.0)}"; then
-            echo "SQLITE GATE PASS"
-          else
-            echo "SQLITE GATE FAIL: ratio=$sqlite_ratio < 1.0"
-            gate_fail=1
-          fi
-          if awk "BEGIN {exit !($libcrypto_ratio >= 1.0)}"; then
-            echo "LIBCRYPTO GATE PASS"
-          else
-            echo "LIBCRYPTO GATE FAIL: ratio=$libcrypto_ratio < 1.0"
-            gate_fail=1
-          fi
-          if awk "BEGIN {exit !($yamlcpp_ratio >= 1.0)}"; then
-            echo "YAMLCPP GATE PASS"
-          else
-            echo "YAMLCPP GATE FAIL: ratio=$yamlcpp_ratio < 1.0"
-            gate_fail=1
-          fi
-          if awk "BEGIN {exit !($protobuflite_ratio >= 1.0)}"; then
-            echo "PROTOBUFLITE GATE PASS"
-          else
-            echo "PROTOBUFLITE GATE FAIL: ratio=$protobuflite_ratio < 1.0"
-            gate_fail=1
-          fi
+          for suite in "${suites[@]}"; do
+            ratio=$(grep -oP "\\[realib_${suite}\\] surviving_pass_ratio = \\K[0-9]+\\.[0-9]+" /tmp/test.log | tail -1)
+            ratio="${ratio:-0.0}"
+            label=$(printf "%s" "$suite" | tr '[:lower:]' '[:upper:]')
+            printf "%-14s surviving_pass_ratio = %s\n" "$suite" "$ratio"
+            if awk "BEGIN {exit !($ratio >= 1.0)}"; then
+              echo "${label} GATE PASS"
+            else
+              echo "${label} GATE FAIL: ratio=$ratio < 1.0"
+              gate_fail=1
+            fi
+          done
           if [ "$gate_fail" -ne 0 ]; then exit 1; fi
 
       - name: Save realib fixtures cache (glibc)
@@ -210,9 +199,10 @@ jobs:
           path: |
             /tmp/sqlite-amalgamation-3450300
             /tmp/openssl-1.1.1w
+            /tmp/zlib-1.3.1
             /tmp/yaml-cpp-0.9.0
             /tmp/protobuf-31.1
-          key: realib-extdeps-glibc-v4-${{ hashFiles('src/tests/realib_fixtures/**', 'src/vmp-lifter/tests/realib_*', 'src/vmp-lifter/tests/realib_common/**') }}
+          key: realib-extdeps-glibc-v5-${{ hashFiles('src/tests/realib_fixtures/**', 'src/vmp-lifter/tests/realib_*', 'src/vmp-lifter/tests/realib_common/**') }}
 
       - name: Save eh_fixture cache (glibc)
         if: always()
@@ -360,9 +350,10 @@ jobs:
           path: |
             /tmp/sqlite-amalgamation-3450300
             /tmp/openssl-1.1.1w
+            /tmp/zlib-1.3.1
             /tmp/yaml-cpp-0.9.0
             /tmp/protobuf-31.1
-          key: realib-extdeps-bionic-v3-${{ hashFiles('docker/Dockerfile', 'src/tests/realib_fixtures/**', 'src/vmp-lifter/tests/realib_*', 'src/vmp-lifter/tests/realib_common/**') }}
+          key: realib-extdeps-bionic-v4-${{ hashFiles('docker/Dockerfile', 'src/tests/realib_fixtures/**', 'src/vmp-lifter/tests/realib_*', 'src/vmp-lifter/tests/realib_common/**') }}
 
       - name: Create LD-clean host compiler wrappers (bionic)
         run: |
@@ -453,12 +444,15 @@ jobs:
           export CARGO_TARGET_DIR="$TERMUX_HOME/target"
           export CC="$TERMUX_PREFIX/bin/clang"
           cd src
+          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_tinylib_e2e --no-run
           "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_sqlite_e2e --no-run
           "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_libcrypto_e2e --no-run
+          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_libz_e2e --no-run
           "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_yamlcpp_e2e --no-run
           "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_protobuflite_e2e --no-run
+          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_cpp_business_e2e --no-run
 
-      - name: Real-lib suite e2e (sqlite + libcrypto + yamlcpp + protobuflite, bionic)
+      - name: Real-lib suite e2e (all suites, bionic)
         # The main --workspace run bails fast on the lib binary's known Cat 2B
         # failures, so the integration binary never runs there. Run it
         # standalone (precompiled above). if: always() because the main
@@ -508,6 +502,15 @@ jobs:
           fi
           export OPENSSL_DIR
 
+          ZLIB_SRC_DIR=/tmp/zlib-1.3.1
+          if [[ ! -f "${ZLIB_SRC_DIR}/zlib.h" ]]; then
+            rm -rf "${ZLIB_SRC_DIR}"
+            mkdir -p "${ZLIB_SRC_DIR}"
+            curl -L https://zlib.net/zlib-1.3.1.tar.gz -o /tmp/zlib-1.3.1.tar.gz
+            tar xzf /tmp/zlib-1.3.1.tar.gz -C "${ZLIB_SRC_DIR}" --strip-components=1
+          fi
+          export ZLIB_SRC_DIR
+
           YAMLCPP_SRC_DIR=/tmp/yaml-cpp-0.9.0
           if [[ ! -f "${YAMLCPP_SRC_DIR}/include/yaml-cpp/yaml.h" ]]; then
             rm -rf "${YAMLCPP_SRC_DIR}"
@@ -530,56 +533,33 @@ jobs:
           cd src
           # `|| true`: each adapter is an independent indicator; a failing one
           # (e.g. surfaced Cat 2B) must not abort the step before the next runs.
+          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_tinylib_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
           "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_sqlite_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
           "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_libcrypto_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
+          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_libz_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
           "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_yamlcpp_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
           "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_protobuflite_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
+          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_cpp_business_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
 
       - name: Check bionic realib gate
         if: always()
         run: |
-          # Explicit per-suite extraction — each suite emits exactly one
-          # `[realib_<suite>] surviving_pass_ratio = X.XXX (…)` line per run.
-          # Use PCRE \K to return only the number. Default to 0.0 when a
-          # suite emitted no ratio line (binary crashed before gate emit),
-          # which fails the gate rather than silently greenlighting it.
-          sqlite_ratio=$(grep -oP '\[realib_sqlite\] surviving_pass_ratio = \K[0-9]+\.[0-9]+' /tmp/test.log | tail -1)
-          libcrypto_ratio=$(grep -oP '\[realib_libcrypto\] surviving_pass_ratio = \K[0-9]+\.[0-9]+' /tmp/test.log | tail -1)
-          yamlcpp_ratio=$(grep -oP '\[realib_yamlcpp\] surviving_pass_ratio = \K[0-9]+\.[0-9]+' /tmp/test.log | tail -1)
-          protobuflite_ratio=$(grep -oP '\[realib_protobuflite\] surviving_pass_ratio = \K[0-9]+\.[0-9]+' /tmp/test.log | tail -1)
-          sqlite_ratio="${sqlite_ratio:-0.0}"
-          libcrypto_ratio="${libcrypto_ratio:-0.0}"
-          yamlcpp_ratio="${yamlcpp_ratio:-0.0}"
-          protobuflite_ratio="${protobuflite_ratio:-0.0}"
-          echo "sqlite    surviving_pass_ratio = $sqlite_ratio"
-          echo "libcrypto surviving_pass_ratio = $libcrypto_ratio"
-          echo "yamlcpp   surviving_pass_ratio = $yamlcpp_ratio"
-          echo "protobuf  surviving_pass_ratio = $protobuflite_ratio"
+          # Default to 0.0 when a suite emitted no ratio line (binary crashed
+          # before gate emit), which fails the gate instead of silently passing.
+          suites=(tinylib sqlite libcrypto libz yamlcpp protobuflite cpp_business)
           gate_fail=0
-          if awk "BEGIN {exit !($sqlite_ratio >= 1.0)}"; then
-            echo "SQLITE GATE PASS"
-          else
-            echo "SQLITE GATE FAIL: ratio=$sqlite_ratio < 1.0"
-            gate_fail=1
-          fi
-          if awk "BEGIN {exit !($libcrypto_ratio >= 1.0)}"; then
-            echo "LIBCRYPTO GATE PASS"
-          else
-            echo "LIBCRYPTO GATE FAIL: ratio=$libcrypto_ratio < 1.0"
-            gate_fail=1
-          fi
-          if awk "BEGIN {exit !($yamlcpp_ratio >= 1.0)}"; then
-            echo "YAMLCPP GATE PASS"
-          else
-            echo "YAMLCPP GATE FAIL: ratio=$yamlcpp_ratio < 1.0"
-            gate_fail=1
-          fi
-          if awk "BEGIN {exit !($protobuflite_ratio >= 1.0)}"; then
-            echo "PROTOBUFLITE GATE PASS"
-          else
-            echo "PROTOBUFLITE GATE FAIL: ratio=$protobuflite_ratio < 1.0"
-            gate_fail=1
-          fi
+          for suite in "${suites[@]}"; do
+            ratio=$(grep -oP "\\[realib_${suite}\\] surviving_pass_ratio = \\K[0-9]+\\.[0-9]+" /tmp/test.log | tail -1)
+            ratio="${ratio:-0.0}"
+            label=$(printf "%s" "$suite" | tr '[:lower:]' '[:upper:]')
+            printf "%-14s surviving_pass_ratio = %s\n" "$suite" "$ratio"
+            if awk "BEGIN {exit !($ratio >= 1.0)}"; then
+              echo "${label} GATE PASS"
+            else
+              echo "${label} GATE FAIL: ratio=$ratio < 1.0"
+              gate_fail=1
+            fi
+          done
           if [ "$gate_fail" -ne 0 ]; then exit 1; fi
 
       - name: Save realib fixtures cache (bionic)
@@ -589,9 +569,10 @@ jobs:
           path: |
             /tmp/sqlite-amalgamation-3450300
             /tmp/openssl-1.1.1w
+            /tmp/zlib-1.3.1
             /tmp/yaml-cpp-0.9.0
             /tmp/protobuf-31.1
-          key: realib-extdeps-bionic-v3-${{ hashFiles('docker/Dockerfile', 'src/tests/realib_fixtures/**', 'src/vmp-lifter/tests/realib_*', 'src/vmp-lifter/tests/realib_common/**') }}
+          key: realib-extdeps-bionic-v4-${{ hashFiles('docker/Dockerfile', 'src/tests/realib_fixtures/**', 'src/vmp-lifter/tests/realib_*', 'src/vmp-lifter/tests/realib_common/**') }}
 
       - name: Oracle Cat 2B litmus (bionic)
         # Proof the three-way differential oracle auto-classifies mba_smoke as

@@ -4,6 +4,15 @@ import unittest
 
 
 WORKFLOW = pathlib.Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
+REALIB_SUITES = (
+    "tinylib",
+    "sqlite",
+    "libcrypto",
+    "libz",
+    "yamlcpp",
+    "protobuflite",
+    "cpp_business",
+)
 
 
 class BionicDiagnosticsWorkflowTest(unittest.TestCase):
@@ -36,12 +45,12 @@ class BionicDiagnosticsWorkflowTest(unittest.TestCase):
 
     def test_realib_extdeps_cache_keys_track_sources(self) -> None:
         self.assertIn(
-            "key: realib-extdeps-glibc-v4-${{ hashFiles('src/tests/realib_fixtures/**', 'src/vmp-lifter/tests/realib_*', 'src/vmp-lifter/tests/realib_common/**') }}",
+            "key: realib-extdeps-glibc-v5-${{ hashFiles('src/tests/realib_fixtures/**', 'src/vmp-lifter/tests/realib_*', 'src/vmp-lifter/tests/realib_common/**') }}",
             self.text,
             "glibc realib extdeps cache must refresh when fixture recipes or suite code change",
         )
         self.assertIn(
-            "key: realib-extdeps-bionic-v3-${{ hashFiles('docker/Dockerfile', 'src/tests/realib_fixtures/**', 'src/vmp-lifter/tests/realib_*', 'src/vmp-lifter/tests/realib_common/**') }}",
+            "key: realib-extdeps-bionic-v4-${{ hashFiles('docker/Dockerfile', 'src/tests/realib_fixtures/**', 'src/vmp-lifter/tests/realib_*', 'src/vmp-lifter/tests/realib_common/**') }}",
             self.text,
             "bionic realib extdeps cache must refresh when fixture recipes, suite code, or baked image source changes",
         )
@@ -55,6 +64,52 @@ class BionicDiagnosticsWorkflowTest(unittest.TestCase):
             self.text,
             "glibc realib extdeps cache must not be pinned to a static stale key",
         )
+
+    def test_realib_extdeps_cache_covers_zlib(self) -> None:
+        self.assertIn(
+            "/tmp/zlib-1.3.1",
+            self.text,
+            "realib extdeps cache must preserve zlib source between CI runs",
+        )
+        self.assertIn(
+            "ZLIB_SRC_DIR=/tmp/zlib-1.3.1",
+            self.text,
+            "realib runs must provision and export ZLIB_SRC_DIR",
+        )
+        self.assertIn(
+            "https://zlib.net/zlib-1.3.1.tar.gz",
+            self.text,
+            "realib runs must be able to download zlib on cache miss",
+        )
+
+    def test_realib_precompile_and_run_cover_all_suites(self) -> None:
+        for suite in REALIB_SUITES:
+            test_name = f"realib_{suite}_e2e"
+            with self.subTest(suite=suite):
+                self.assertGreaterEqual(
+                    self.text.count(f"--test {test_name} --no-run"),
+                    2,
+                    f"{test_name} must be precompiled on both glibc and bionic",
+                )
+                self.assertGreaterEqual(
+                    self.text.count(f"--test {test_name} -- --nocapture"),
+                    2,
+                    f"{test_name} must run on both glibc and bionic",
+                )
+
+    def test_realib_gates_check_all_suite_ratios(self) -> None:
+        self.assertIn(
+            "suites=(tinylib sqlite libcrypto libz yamlcpp protobuflite cpp_business)",
+            self.text,
+            "realib gate must iterate all suites instead of hard-coding the old subset",
+        )
+        for suite in REALIB_SUITES:
+            with self.subTest(suite=suite):
+                self.assertIn(
+                    f"realib_{suite}",
+                    self.text,
+                    f"{suite} ratio must be extracted and checked",
+                )
 
     def test_bionic_host_toolchain_wrappers_clear_ld_library_path(self) -> None:
         self.assertIn(

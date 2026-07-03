@@ -8,6 +8,7 @@ validation via Docker.
 
 - Native ARM64 hosted runner (no qemu, no cross)
 - Optional second job inside `termux/termux-docker` to validate bionic libc compatibility
+- Hard gates every realib e2e suite on both glibc and bionic, including New V6 coverage
 - Telegram bot integration for failure notifications
 - Designed for projects that maintain separate development and CI repositories
 
