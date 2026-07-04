@@ -118,6 +118,7 @@ jobs:
           CC=gcc cargo test -p vmp-lifter --test realib_yamlcpp_e2e --no-run
           CC=gcc cargo test -p vmp-lifter --test realib_protobuflite_e2e --no-run
           CC=gcc cargo test -p vmp-lifter --test realib_cpp_business_e2e --no-run
+          CC=gcc cargo test -p vmp-lifter --test realib_matrix_e2e --no-run
 
       - name: Real-lib suite e2e (all suites, glibc)
         if: always()
@@ -163,26 +164,39 @@ jobs:
           export PROTOBUF_SRC_DIR
           export CC=gcc
           cd src
-          cargo test -p vmp-lifter --test realib_tinylib_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
-          cargo test -p vmp-lifter --test realib_sqlite_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
-          cargo test -p vmp-lifter --test realib_libcrypto_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
-          cargo test -p vmp-lifter --test realib_libz_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
-          cargo test -p vmp-lifter --test realib_yamlcpp_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
-          cargo test -p vmp-lifter --test realib_protobuflite_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
-          cargo test -p vmp-lifter --test realib_cpp_business_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
+          run_realib_suite() {
+            local suite="$1"
+            cargo test -p vmp-lifter --test "realib_${suite}_e2e" -- --nocapture 2>&1 | tee -a /tmp/test.log
+            local status=${PIPESTATUS[0]}
+            echo "[realib_${suite}] cargo_status = ${status}" | tee -a /tmp/test.log
+          }
+          run_realib_suite tinylib
+          run_realib_suite sqlite
+          run_realib_suite libcrypto
+          run_realib_suite libz
+          run_realib_suite yamlcpp
+          run_realib_suite protobuflite
+          run_realib_suite cpp_business
+          run_realib_suite matrix
 
       - name: Check glibc realib gate
         if: always()
         run: |
           # Default to 0.0 when a suite emitted no ratio line (binary crashed
           # before gate emit), which fails the gate instead of silently passing.
-          suites=(tinylib sqlite libcrypto libz yamlcpp protobuflite cpp_business)
+          suites=(tinylib sqlite libcrypto libz yamlcpp protobuflite cpp_business matrix)
           gate_fail=0
           for suite in "${suites[@]}"; do
             ratio=$(grep -oP "\\[realib_${suite}\\] surviving_pass_ratio = \\K[0-9]+\\.[0-9]+" /tmp/test.log | tail -1)
             ratio="${ratio:-0.0}"
+            cargo_status=$(grep -oP "\\[realib_${suite}\\] cargo_status = \\K[0-9]+" /tmp/test.log | tail -1)
+            cargo_status="${cargo_status:-999}"
             label=$(printf "%s" "$suite" | tr '[:lower:]' '[:upper:]')
-            printf "%-14s surviving_pass_ratio = %s\n" "$suite" "$ratio"
+            printf "%-14s surviving_pass_ratio = %s cargo_status = %s\n" "$suite" "$ratio" "$cargo_status"
+            if [ "$cargo_status" -ne 0 ]; then
+              echo "${label} REALIB CARGO TEST FAIL: status=$cargo_status"
+              gate_fail=1
+            fi
             if awk "BEGIN {exit !($ratio >= 1.0)}"; then
               echo "${label} GATE PASS"
             else
@@ -451,6 +465,7 @@ jobs:
           "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_yamlcpp_e2e --no-run
           "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_protobuflite_e2e --no-run
           "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_cpp_business_e2e --no-run
+          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_matrix_e2e --no-run
 
       - name: Real-lib suite e2e (all suites, bionic)
         # The main --workspace run bails fast on the lib binary's known Cat 2B
@@ -531,28 +546,41 @@ jobs:
 
           export CC="$TERMUX_PREFIX/bin/clang"
           cd src
-          # `|| true`: each adapter is an independent indicator; a failing one
-          # (e.g. surfaced Cat 2B) must not abort the step before the next runs.
-          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_tinylib_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
-          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_sqlite_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
-          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_libcrypto_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
-          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_libz_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
-          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_yamlcpp_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
-          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_protobuflite_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
-          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_cpp_business_e2e -- --nocapture 2>&1 | tee -a /tmp/test.log || true
+          # Each adapter is an independent indicator; record each cargo status
+          # so the later gate can fail without aborting before the next suite.
+          run_realib_suite() {
+            local suite="$1"
+            "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test "realib_${suite}_e2e" -- --nocapture 2>&1 | tee -a /tmp/test.log
+            local status=${PIPESTATUS[0]}
+            echo "[realib_${suite}] cargo_status = ${status}" | tee -a /tmp/test.log
+          }
+          run_realib_suite tinylib
+          run_realib_suite sqlite
+          run_realib_suite libcrypto
+          run_realib_suite libz
+          run_realib_suite yamlcpp
+          run_realib_suite protobuflite
+          run_realib_suite cpp_business
+          run_realib_suite matrix
 
       - name: Check bionic realib gate
         if: always()
         run: |
           # Default to 0.0 when a suite emitted no ratio line (binary crashed
           # before gate emit), which fails the gate instead of silently passing.
-          suites=(tinylib sqlite libcrypto libz yamlcpp protobuflite cpp_business)
+          suites=(tinylib sqlite libcrypto libz yamlcpp protobuflite cpp_business matrix)
           gate_fail=0
           for suite in "${suites[@]}"; do
             ratio=$(grep -oP "\\[realib_${suite}\\] surviving_pass_ratio = \\K[0-9]+\\.[0-9]+" /tmp/test.log | tail -1)
             ratio="${ratio:-0.0}"
+            cargo_status=$(grep -oP "\\[realib_${suite}\\] cargo_status = \\K[0-9]+" /tmp/test.log | tail -1)
+            cargo_status="${cargo_status:-999}"
             label=$(printf "%s" "$suite" | tr '[:lower:]' '[:upper:]')
-            printf "%-14s surviving_pass_ratio = %s\n" "$suite" "$ratio"
+            printf "%-14s surviving_pass_ratio = %s cargo_status = %s\n" "$suite" "$ratio" "$cargo_status"
+            if [ "$cargo_status" -ne 0 ]; then
+              echo "${label} REALIB CARGO TEST FAIL: status=$cargo_status"
+              gate_fail=1
+            fi
             if awk "BEGIN {exit !($ratio >= 1.0)}"; then
               echo "${label} GATE PASS"
             else

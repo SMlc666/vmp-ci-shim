@@ -12,6 +12,7 @@ REALIB_SUITES = (
     "yamlcpp",
     "protobuflite",
     "cpp_business",
+    "matrix",
 )
 
 
@@ -92,14 +93,14 @@ class BionicDiagnosticsWorkflowTest(unittest.TestCase):
                     f"{test_name} must be precompiled on both glibc and bionic",
                 )
                 self.assertGreaterEqual(
-                    self.text.count(f"--test {test_name} -- --nocapture"),
+                    self.text.count(f"run_realib_suite {suite}"),
                     2,
                     f"{test_name} must run on both glibc and bionic",
                 )
 
     def test_realib_gates_check_all_suite_ratios(self) -> None:
         self.assertIn(
-            "suites=(tinylib sqlite libcrypto libz yamlcpp protobuflite cpp_business)",
+            "suites=(tinylib sqlite libcrypto libz yamlcpp protobuflite cpp_business matrix)",
             self.text,
             "realib gate must iterate all suites instead of hard-coding the old subset",
         )
@@ -110,6 +111,18 @@ class BionicDiagnosticsWorkflowTest(unittest.TestCase):
                     self.text,
                     f"{suite} ratio must be extracted and checked",
                 )
+
+    def test_realib_gates_check_cargo_test_status(self) -> None:
+        self.assertIn(
+            "cargo_status",
+            self.text,
+            "realib runs must append each cargo test exit status to /tmp/test.log",
+        )
+        self.assertIn(
+            "REALIB CARGO TEST FAIL",
+            self.text,
+            "realib gate must fail when a suite binary exits non-zero even if it emitted a ratio",
+        )
 
     def test_bionic_host_toolchain_wrappers_clear_ld_library_path(self) -> None:
         self.assertIn(
