@@ -166,8 +166,10 @@ jobs:
           cd src
           run_realib_suite() {
             local suite="$1"
+            set +e
             cargo test -p vmp-lifter --test "realib_${suite}_e2e" -- --nocapture 2>&1 | tee -a /tmp/test.log
             local status=${PIPESTATUS[0]}
+            set -e
             echo "[realib_${suite}] cargo_status = ${status}" | tee -a /tmp/test.log
           }
           run_realib_suite tinylib
@@ -550,8 +552,10 @@ jobs:
           # so the later gate can fail without aborting before the next suite.
           run_realib_suite() {
             local suite="$1"
+            set +e
             "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test "realib_${suite}_e2e" -- --nocapture 2>&1 | tee -a /tmp/test.log
             local status=${PIPESTATUS[0]}
+            set -e
             echo "[realib_${suite}] cargo_status = ${status}" | tee -a /tmp/test.log
           }
           run_realib_suite tinylib

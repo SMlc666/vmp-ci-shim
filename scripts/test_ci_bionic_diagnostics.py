@@ -114,6 +114,16 @@ class BionicDiagnosticsWorkflowTest(unittest.TestCase):
 
     def test_realib_gates_check_cargo_test_status(self) -> None:
         self.assertIn(
+            "set +e",
+            self.text,
+            "realib runner must disable bash -e around cargo test so status is always recorded",
+        )
+        self.assertIn(
+            "set -e",
+            self.text,
+            "realib runner must restore bash -e after recording cargo status",
+        )
+        self.assertIn(
             "cargo_status",
             self.text,
             "realib runs must append each cargo test exit status to /tmp/test.log",
