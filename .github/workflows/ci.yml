@@ -142,7 +142,25 @@ jobs:
           if [[ ! -f "${ZLIB_SRC_DIR}/zlib.h" ]]; then
             rm -rf "${ZLIB_SRC_DIR}"
             mkdir -p "${ZLIB_SRC_DIR}"
-            curl -L https://zlib.net/zlib-1.3.1.tar.gz -o /tmp/zlib-1.3.1.tar.gz
+            download_zlib_tarball() {
+              local out="$1"
+              local urls=(
+                "https://zlib.net/zlib-1.3.1.tar.gz"
+                "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz"
+              )
+              rm -f "$out"
+              for url in "${urls[@]}"; do
+                echo "Fetching zlib from ${url}"
+                if curl -fL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 120 "$url" -o "$out" \
+                  && tar tzf "$out" >/dev/null; then
+                  return 0
+                fi
+                rm -f "$out"
+              done
+              echo "FATAL: unable to fetch a valid zlib-1.3.1 tarball" >&2
+              return 1
+            }
+            download_zlib_tarball /tmp/zlib-1.3.1.tar.gz
             tar xzf /tmp/zlib-1.3.1.tar.gz -C "${ZLIB_SRC_DIR}" --strip-components=1
           fi
           export ZLIB_SRC_DIR
@@ -523,7 +541,25 @@ jobs:
           if [[ ! -f "${ZLIB_SRC_DIR}/zlib.h" ]]; then
             rm -rf "${ZLIB_SRC_DIR}"
             mkdir -p "${ZLIB_SRC_DIR}"
-            curl -L https://zlib.net/zlib-1.3.1.tar.gz -o /tmp/zlib-1.3.1.tar.gz
+            download_zlib_tarball() {
+              local out="$1"
+              local urls=(
+                "https://zlib.net/zlib-1.3.1.tar.gz"
+                "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz"
+              )
+              rm -f "$out"
+              for url in "${urls[@]}"; do
+                echo "Fetching zlib from ${url}"
+                if curl -fL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 120 "$url" -o "$out" \
+                  && tar tzf "$out" >/dev/null; then
+                  return 0
+                fi
+                rm -f "$out"
+              done
+              echo "FATAL: unable to fetch a valid zlib-1.3.1 tarball" >&2
+              return 1
+            }
+            download_zlib_tarball /tmp/zlib-1.3.1.tar.gz
             tar xzf /tmp/zlib-1.3.1.tar.gz -C "${ZLIB_SRC_DIR}" --strip-components=1
           fi
           export ZLIB_SRC_DIR
