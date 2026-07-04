@@ -22,6 +22,9 @@ concurrency:
   group: ${{ github.event.inputs.commit_sha }}
   cancel-in-progress: true
 
+env:
+  CARGO_INCREMENTAL: "0"
+
 jobs:
   public_demo:
     runs-on: ubuntu-24.04-arm
@@ -111,6 +114,7 @@ jobs:
         if: always()
         working-directory: src
         run: |
+          export CARGO_INCREMENTAL=0
           CC=gcc cargo test -p vmp-lifter --test realib_tinylib_e2e --no-run
           CC=gcc cargo test -p vmp-lifter --test realib_sqlite_e2e --no-run
           CC=gcc cargo test -p vmp-lifter --test realib_libcrypto_e2e --no-run
@@ -181,6 +185,7 @@ jobs:
           fi
           export PROTOBUF_SRC_DIR
           export CC=gcc
+          export CARGO_INCREMENTAL=0
           cd src
           run_realib_suite() {
             local suite="$1"
@@ -476,6 +481,7 @@ jobs:
           export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TERMUX_PREFIX/bin/clang"
           export CARGO_TARGET_AARCH64_LINUX_ANDROID_AR="$TERMUX_PREFIX/bin/llvm-ar"
           export CARGO_TARGET_DIR="$TERMUX_HOME/target"
+          export CARGO_INCREMENTAL=0
           export CC="$TERMUX_PREFIX/bin/clang"
           cd src
           "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_tinylib_e2e --no-run
@@ -504,6 +510,7 @@ jobs:
           export CARGO_TARGET_AARCH64_LINUX_ANDROID_AR="$TERMUX_PREFIX/bin/llvm-ar"
           export CARGO_TARGET_DIR="$TERMUX_HOME/target"
           export VMP_REALIB_E2E=1
+          export CARGO_INCREMENTAL=0
 
           SQLITE_SRC_DIR=/tmp/sqlite-amalgamation-3450300
           if [[ ! -f "${SQLITE_SRC_DIR}/sqlite3.c" ]]; then

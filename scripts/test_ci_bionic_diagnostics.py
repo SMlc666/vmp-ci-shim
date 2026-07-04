@@ -134,6 +134,18 @@ class BionicDiagnosticsWorkflowTest(unittest.TestCase):
             "realib gate must fail when a suite binary exits non-zero even if it emitted a ratio",
         )
 
+    def test_rust_incremental_is_disabled_for_ci_link_gates(self) -> None:
+        self.assertIn(
+            'CARGO_INCREMENTAL: "0"',
+            self.text,
+            "workflow-level cargo builds must disable Rust incremental linking",
+        )
+        self.assertGreaterEqual(
+            self.text.count("export CARGO_INCREMENTAL=0"),
+            4,
+            "realib glibc and bionic shell blocks must preserve CARGO_INCREMENTAL=0",
+        )
+
     def test_bionic_host_toolchain_wrappers_clear_ld_library_path(self) -> None:
         self.assertIn(
             "Create LD-clean host compiler wrappers (bionic)",
