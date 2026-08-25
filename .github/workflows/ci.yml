@@ -119,6 +119,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     env:
       TERMUX_PREFIX: /data/data/com.termux/files/usr
+      PREFIX: /data/data/com.termux/files/usr
       TERMUX_HOME: /data/data/com.termux/files/home
       BIONIC_IMAGE: ghcr.io/smlc666/termux-rust:v5
       BIONIC_CACHE_VERSION: v8-image-v5
@@ -363,6 +364,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     env:
       TERMUX_PREFIX: /data/data/com.termux/files/usr
+      PREFIX: /data/data/com.termux/files/usr
       TERMUX_HOME: /data/data/com.termux/files/home
       BIONIC_IMAGE: ghcr.io/smlc666/termux-rust:v5
       BIONIC_CACHE_VERSION: v8-image-v5
