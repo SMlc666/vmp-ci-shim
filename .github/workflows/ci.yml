@@ -287,6 +287,11 @@ jobs:
         with:
           path: src/tests/cpp_fixtures/eh_fixture/build
           key: eh-fixture-glibc-${{ hashFiles('src/tests/cpp_fixtures/eh_fixture/**') }}
+      - name: Prepare glibc Python scanner
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/vmp-python"
+          "$RUNNER_TEMP/vmp-python/bin/pip" install --disable-pip-version-check --no-input pyelftools
       - name: Prepare glibc realib dependencies
         env:
           REALIB_LIBC: glibc
@@ -310,6 +315,7 @@ jobs:
           VMP_REALIB_E2E: "1"
           VMP_REALIB_ISOLATE_FIXTURES: "1"
           VMP_REALIB_BASELINE_CACHE: /tmp/vmp-realib-baselines-${{ inputs.commit_sha }}
+          VMP_REALIB_PYTHON: ${{ runner.temp }}/vmp-python/bin/python
           VMP_REALIB_TEST_THREADS: "2"
           CC: gcc
           TEST_LOG: /tmp/test.log
@@ -463,6 +469,11 @@ jobs:
         run: .github/scripts/create-ld-clean-wrappers.sh
       - name: Configure bionic toolchain
         run: .github/scripts/configure-bionic-env.sh
+      - name: Prepare bionic Python scanner
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/vmp-python"
+          "$RUNNER_TEMP/vmp-python/bin/pip" install --disable-pip-version-check --no-input pyelftools
       - name: Prepare bionic realib dependencies
         env:
           REALIB_LIBC: bionic
@@ -491,6 +502,7 @@ jobs:
           VMP_REALIB_E2E: "1"
           VMP_REALIB_ISOLATE_FIXTURES: "1"
           VMP_REALIB_BASELINE_CACHE: /data/data/com.termux/files/usr/tmp/vmp-realib-baselines-${{ inputs.commit_sha }}
+          VMP_REALIB_PYTHON: ${{ runner.temp }}/vmp-python/bin/python
           VMP_REALIB_TEST_THREADS: "2"
           CC: /data/data/com.termux/files/usr/bin/clang
           CXX: /data/data/com.termux/files/usr/bin/clang++
