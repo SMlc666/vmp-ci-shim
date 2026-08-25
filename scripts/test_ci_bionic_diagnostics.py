@@ -33,6 +33,8 @@ class LayeredWorkflowTest(unittest.TestCase):
         self.assertIn("- unit", self.workflow)
         self.assertIn("- e2e", self.workflow)
         self.assertIn("cargo test --workspace --lib --bins --quiet", self.workflow)
+        self.assertIn("--skip tests::e2e", self.workflow)
+        self.assertIn("--skip _ndk_", self.workflow)
         self.assertIn("cargo build -p vmp-lifter --bins --quiet", self.workflow)
 
     def test_private_checkout_requires_and_verifies_full_sha(self) -> None:

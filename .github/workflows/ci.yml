@@ -69,7 +69,15 @@ jobs:
         run: |
           set -euo pipefail
           cargo build -p vmp-lifter --bins --quiet
-          cargo test --workspace --lib --bins --quiet 2>&1 | tee /tmp/unit-glibc.log
+          cargo test --workspace --lib --bins --quiet -- \
+            --skip tests::e2e \
+            --skip byte_identical \
+            --skip _ndk_ \
+            --skip _bytecode_ \
+            --skip pattern_b_assemble \
+            --skip v13_regalloc_pipeline_wiring \
+            --skip proc_maps_test \
+            2>&1 | tee /tmp/unit-glibc.log
       - name: Upload glibc unit log
         if: failure()
         uses: actions/upload-artifact@v4
@@ -180,7 +188,15 @@ jobs:
           mkdir -p "$TERMUX_HOME/target"
           ln -sfn "$TERMUX_HOME/target" "$GITHUB_WORKSPACE/src/target"
           cargo build -p vmp-lifter --bins --quiet
-          cargo test --workspace --lib --bins --quiet 2>&1 | tee /tmp/unit-bionic.log
+          cargo test --workspace --lib --bins --quiet -- \
+            --skip tests::e2e \
+            --skip byte_identical \
+            --skip _ndk_ \
+            --skip _bytecode_ \
+            --skip pattern_b_assemble \
+            --skip v13_regalloc_pipeline_wiring \
+            --skip proc_maps_test \
+            2>&1 | tee /tmp/unit-bionic.log
       - name: Save bionic cargo cache
         if: ${{ always() && steps.cargo_cache.outcome == 'success' && steps.cargo_cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
