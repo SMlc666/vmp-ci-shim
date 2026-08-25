@@ -1,7 +1,15 @@
-#!/usr/bin/env bash
+#!/usr/bin/bash
 set -euo pipefail
 
 libc=${REALIB_LIBC:?REALIB_LIBC must be glibc or bionic}
+if [[ "$libc" == bionic ]]; then
+  export TERMUX_PREFIX="${TERMUX_PREFIX:?TERMUX_PREFIX is required for bionic dependency setup}"
+  export HOME="${TERMUX_HOME:?TERMUX_HOME is required for bionic dependency setup}"
+  export PATH="$TERMUX_PREFIX/bin:/tmp/host-toolchain-cleanbin:$PATH"
+  export LD_LIBRARY_PATH="$TERMUX_PREFIX/lib"
+  export HTTPS_PROXY="${HTTPS_PROXY:-http://127.0.0.1:3128}"
+  export HTTP_PROXY="${HTTP_PROXY:-http://127.0.0.1:3128}"
+fi
 
 fetch_tarball() {
   local out=$1

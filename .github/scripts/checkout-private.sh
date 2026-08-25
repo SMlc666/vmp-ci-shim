@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/bash
 set -euo pipefail
 
 repo_url=${1:?usage: checkout-private.sh REPO_URL FULL_COMMIT_SHA [DEST]}

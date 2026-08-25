@@ -33,6 +33,7 @@ class LayeredWorkflowTest(unittest.TestCase):
         self.assertIn("- unit", self.workflow)
         self.assertIn("- e2e", self.workflow)
         self.assertIn("cargo test --workspace --lib --bins --quiet", self.workflow)
+        self.assertIn("cargo build -p vmp-lifter --bins --quiet", self.workflow)
 
     def test_private_checkout_requires_and_verifies_full_sha(self) -> None:
         self.assertIn("checkout-private.sh", self.workflow)
@@ -70,6 +71,8 @@ class LayeredWorkflowTest(unittest.TestCase):
         self.assertGreaterEqual(self.workflow.count("curl -fsSI --max-time 15 -x http://127.0.0.1:3128"), 2)
         self.assertIn("TOOLCHAIN_FAILURE", (SCRIPTS / "configure-bionic-env.sh").read_text(encoding="utf-8"))
         self.assertIn('for tool in cargo rustc clang clang++ llvm-ar', (SCRIPTS / "configure-bionic-env.sh").read_text(encoding="utf-8"))
+        self.assertIn('env -u LD_LIBRARY_PATH', self.workflow)
+        self.assertIn('export LD_LIBRARY_PATH="$TERMUX_PREFIX/lib"', self.workflow)
         self.assertIn("Create LD-clean host compiler wrappers", self.workflow)
         self.assertIn("unset LD_LIBRARY_PATH", (SCRIPTS / "create-ld-clean-wrappers.sh").read_text(encoding="utf-8"))
 

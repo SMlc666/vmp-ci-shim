@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/bash
 set -u -o pipefail
 
 log_path=${1:?usage: realib-gate.sh LOG_PATH}

@@ -67,7 +67,8 @@ jobs:
         id: unit
         working-directory: src
         run: |
-          set -o pipefail
+          set -euo pipefail
+          cargo build -p vmp-lifter --bins --quiet
           cargo test --workspace --lib --bins --quiet 2>&1 | tee /tmp/unit-glibc.log
       - name: Upload glibc unit log
         if: failure()
@@ -167,7 +168,18 @@ jobs:
         id: unit
         working-directory: src
         run: |
-          set -o pipefail
+          set -euo pipefail
+          export HOME="$TERMUX_HOME"
+          export PATH="$TERMUX_PREFIX/bin:/tmp/host-toolchain-cleanbin:$PATH"
+          export LD_LIBRARY_PATH="$TERMUX_PREFIX/lib"
+          export HTTPS_PROXY=http://127.0.0.1:3128
+          export HTTP_PROXY=http://127.0.0.1:3128
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TERMUX_PREFIX/bin/clang"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_AR="$TERMUX_PREFIX/bin/llvm-ar"
+          export CARGO_TARGET_DIR="$TERMUX_HOME/target"
+          mkdir -p "$TERMUX_HOME/target"
+          ln -sfn "$TERMUX_HOME/target" "$GITHUB_WORKSPACE/src/target"
+          cargo build -p vmp-lifter --bins --quiet
           cargo test --workspace --lib --bins --quiet 2>&1 | tee /tmp/unit-bionic.log
       - name: Save bionic cargo cache
         if: ${{ always() && steps.cargo_cache.outcome == 'success' && steps.cargo_cache.outputs.cache-hit != 'true' }}
@@ -384,7 +396,17 @@ jobs:
         run: .github/scripts/prepare-realib-deps.sh
       - name: Build lifter and e2e targets once
         working-directory: src
-        run: cargo build -p vmp-lifter --bins --quiet
+        run: |
+          set -euo pipefail
+          export HOME="$TERMUX_HOME"
+          export PATH="$TERMUX_PREFIX/bin:/tmp/host-toolchain-cleanbin:$PATH"
+          export LD_LIBRARY_PATH="$TERMUX_PREFIX/lib"
+          export HTTPS_PROXY=http://127.0.0.1:3128
+          export HTTP_PROXY=http://127.0.0.1:3128
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TERMUX_PREFIX/bin/clang"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_AR="$TERMUX_PREFIX/bin/llvm-ar"
+          export CARGO_TARGET_DIR="$TERMUX_HOME/target"
+          cargo build -p vmp-lifter --bins --quiet
       - name: Run bionic EH and realib e2e layer
         working-directory: src
         env:
@@ -392,16 +414,21 @@ jobs:
           CC: /data/data/com.termux/files/usr/bin/clang
           TEST_LOG: /tmp/test.log
         run: |
-          "$GITHUB_WORKSPACE/.github/scripts/run-e2e-targets.sh" \
-            eh_fixture_e2e e2e_eh_fixture \
-            realib_tinylib_e2e realib_tinylib \
-            realib_sqlite_e2e realib_sqlite \
-            realib_libcrypto_e2e realib_libcrypto \
-            realib_libz_e2e realib_libz \
-            realib_yamlcpp_e2e realib_yamlcpp \
-            realib_protobuflite_e2e realib_protobuflite \
-            realib_cpp_business_e2e realib_cpp_business \
-            realib_matrix_e2e realib_matrix
+          env -u LD_LIBRARY_PATH \
+            BIONIC_MODE=1 \
+            BIONIC_PREFIX="$TERMUX_PREFIX" \
+            BIONIC_HOME="$TERMUX_HOME" \
+            CARGO_TARGET_DIR="$TERMUX_HOME/target" \
+            "$GITHUB_WORKSPACE/.github/scripts/run-e2e-targets.sh" \
+              eh_fixture_e2e e2e_eh_fixture \
+              realib_tinylib_e2e realib_tinylib \
+              realib_sqlite_e2e realib_sqlite \
+              realib_libcrypto_e2e realib_libcrypto \
+              realib_libz_e2e realib_libz \
+              realib_yamlcpp_e2e realib_yamlcpp \
+              realib_protobuflite_e2e realib_protobuflite \
+              realib_cpp_business_e2e realib_cpp_business \
+              realib_matrix_e2e realib_matrix
       - name: Check bionic e2e gate
         run: .github/scripts/realib-gate.sh /tmp/test.log
       - name: Run optional Cat 2B oracle litmus
@@ -409,7 +436,13 @@ jobs:
         working-directory: src
         env:
           VMP_ORACLE_LITMUS: "1"
-        run: cargo test -p vmp-lifter --test oracle_litmus -- --nocapture
+        run: |
+          set -euo pipefail
+          export HOME="$TERMUX_HOME"
+          export PATH="$TERMUX_PREFIX/bin:/tmp/host-toolchain-cleanbin:$PATH"
+          export LD_LIBRARY_PATH="$TERMUX_PREFIX/lib"
+          export CARGO_TARGET_DIR="$TERMUX_HOME/target"
+          cargo test -p vmp-lifter --test oracle_litmus -- --nocapture
       - name: Save bionic realib dependency cache
         if: ${{ always() && steps.realib_cache.outcome == 'success' && steps.realib_cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4

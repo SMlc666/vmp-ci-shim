@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/bash
 set -u -o pipefail
 
 log_path=${TEST_LOG:-/tmp/test.log}
@@ -8,6 +8,33 @@ if [[ $# -eq 0 ]]; then
   echo "E2E_RUNNER_FAILURE: no test targets supplied" | tee -a "$log_path"
   exit 1
 fi
+
+run_cargo() {
+  if [[ "${BIONIC_MODE:-0}" == "1" ]]; then
+    env \
+      HOME="${BIONIC_HOME:?BIONIC_HOME is required}" \
+      PATH="${BIONIC_PREFIX:?BIONIC_PREFIX is required}/bin:/tmp/host-toolchain-cleanbin:${PATH}" \
+      LD_LIBRARY_PATH="$BIONIC_PREFIX/lib" \
+      CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$BIONIC_HOME/target}" \
+      CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$BIONIC_PREFIX/bin/clang" \
+      CARGO_TARGET_AARCH64_LINUX_ANDROID_AR="$BIONIC_PREFIX/bin/llvm-ar" \
+      "$BIONIC_PREFIX/bin/cargo" "$@"
+  else
+    cargo "$@"
+  fi
+}
+
+run_binary() {
+  if [[ "${BIONIC_MODE:-0}" == "1" ]]; then
+    env \
+      HOME="${BIONIC_HOME:?BIONIC_HOME is required}" \
+      PATH="$BIONIC_PREFIX/bin:/tmp/host-toolchain-cleanbin:${PATH}" \
+      LD_LIBRARY_PATH="$BIONIC_PREFIX/lib" \
+      "$@"
+  else
+    "$@"
+  fi
+}
 
 run_target() {
   local target=$1
@@ -21,7 +48,7 @@ run_target() {
   fi
 
   echo "=== building e2e target $target ===" | tee -a "$log_path"
-  cargo test -p vmp-lifter --test "$target" --no-run --quiet 2>&1 | tee -a "$log_path"
+  run_cargo test -p vmp-lifter --test "$target" --no-run --quiet 2>&1 | tee -a "$log_path"
   build_rc=${PIPESTATUS[0]}
 
   if [[ $build_rc -eq 0 ]]; then
@@ -35,7 +62,7 @@ run_target() {
       run_rc=127
     else
       echo "=== running e2e target $target ===" | tee -a "$log_path"
-      "$binary" --nocapture 2>&1 | tee -a "$log_path"
+      run_binary "$binary" --nocapture 2>&1 | tee -a "$log_path"
       run_rc=${PIPESTATUS[0]}
     fi
   else
