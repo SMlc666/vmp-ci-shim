@@ -56,7 +56,9 @@ class LayeredWorkflowTest(unittest.TestCase):
         self.assertNotIn("cargo test", self.runner)
         self.assertIn('VMP_REALIB_TEST_THREADS', self.runner)
         self.assertIn('--test-threads="$test_threads"', self.runner)
-        self.assertIn("VMP_REALIB_SERIAL_TARGETS", self.runner)
+        self.assertIn("run requires TARGET LABEL FILTER", self.runner)
+        self.assertIn("E2E_RUNS", self.workflow)
+        self.assertIn("VMP_REALIB_BASELINE_CACHE", self.workflow)
         for suite in REALIB_SUITES:
             with self.subTest(suite=suite):
                 self.assertIn(f"realib_{suite}_e2e", self.plan)

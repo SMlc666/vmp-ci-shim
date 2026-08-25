@@ -24,6 +24,7 @@ run_binary() {
 run_target() {
   local target=$1
   local label=$2
+  local filter=$3
   local build_rc=0
   local run_rc=0
   local target_dir=${CARGO_TARGET_DIR:-target}
@@ -52,21 +53,44 @@ run_target() {
       case " ${VMP_REALIB_SERIAL_TARGETS:-} " in
         *" ${target} "*) test_threads=1 ;;
       esac
-      run_binary "$binary" --nocapture --test-threads="$test_threads" 2>&1 | tee -a "$log_path"
+      local -a test_args=()
+      if [[ "$filter" != "-" ]]; then
+        test_args+=("$filter")
+      fi
+      run_binary "$binary" "${test_args[@]}" --nocapture --test-threads="$test_threads" 2>&1 | tee -a "$log_path"
       run_rc=${PIPESTATUS[0]}
     fi
   else
     run_rc=$build_rc
   fi
 
-  echo "[$label] cargo_status = $run_rc" | tee -a "$log_path"
+  echo "[$label] filter=$filter run_status=$run_rc" | tee -a "$log_path"
+  return "$run_rc"
 }
 
+declare -A aggregate_status=()
+
 while [[ $# -gt 0 ]]; do
+  if [[ $# -lt 3 ]]; then
+    echo "E2E_RUNNER_FAILURE: each run requires TARGET LABEL FILTER" | tee -a "$log_path"
+    exit 1
+  fi
   target=$1
   label=$2
-  shift 2
-  run_target "$target" "$label"
+  filter=$3
+  shift 3
+  if run_target "$target" "$label" "$filter"; then
+    run_rc=0
+  else
+    run_rc=$?
+  fi
+  if [[ "${aggregate_status[$label]+present}" != present || "${aggregate_status[$label]}" -eq 0 ]]; then
+    aggregate_status[$label]=$run_rc
+  fi
+done
+
+for label in "${!aggregate_status[@]}"; do
+  echo "[$label] cargo_status = ${aggregate_status[$label]}" | tee -a "$log_path"
 done
 
 # The gate script consumes every recorded status and emits one final result.
