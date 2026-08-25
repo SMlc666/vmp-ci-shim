@@ -256,9 +256,19 @@ jobs:
         env:
           REALIB_LIBC: glibc
         run: .github/scripts/prepare-realib-deps.sh
-      - name: Build lifter and e2e targets once
+      - name: Build E2E targets once
         working-directory: src
-        run: cargo build -p vmp-lifter --bins --quiet
+        run: |
+          "$GITHUB_WORKSPACE/.github/scripts/build-e2e-targets.sh" \
+            eh_fixture_e2e \
+            realib_tinylib_e2e \
+            realib_sqlite_e2e \
+            realib_libcrypto_e2e \
+            realib_libz_e2e \
+            realib_yamlcpp_e2e \
+            realib_protobuflite_e2e \
+            realib_cpp_business_e2e \
+            realib_matrix_e2e
       - name: Run glibc EH and realib e2e layer
         working-directory: src
         env:
@@ -410,19 +420,24 @@ jobs:
         env:
           REALIB_LIBC: bionic
         run: .github/scripts/prepare-realib-deps.sh
-      - name: Build lifter and e2e targets once
+      - name: Build E2E targets once
         working-directory: src
         run: |
-          set -euo pipefail
-          export HOME="$TERMUX_HOME"
-          export PATH="$TERMUX_PREFIX/bin:/tmp/host-toolchain-cleanbin:$PATH"
-          export LD_LIBRARY_PATH="$TERMUX_PREFIX/lib"
-          export HTTPS_PROXY=http://127.0.0.1:3128
-          export HTTP_PROXY=http://127.0.0.1:3128
-          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TERMUX_PREFIX/bin/clang"
-          export CARGO_TARGET_AARCH64_LINUX_ANDROID_AR="$TERMUX_PREFIX/bin/llvm-ar"
-          export CARGO_TARGET_DIR="$TERMUX_HOME/target"
-          cargo build -p vmp-lifter --bins --quiet
+          env -u LD_LIBRARY_PATH \
+            BIONIC_MODE=1 \
+            BIONIC_PREFIX="$TERMUX_PREFIX" \
+            BIONIC_HOME="$TERMUX_HOME" \
+            CARGO_TARGET_DIR="$TERMUX_HOME/target" \
+            "$GITHUB_WORKSPACE/.github/scripts/build-e2e-targets.sh" \
+              eh_fixture_e2e \
+              realib_tinylib_e2e \
+              realib_sqlite_e2e \
+              realib_libcrypto_e2e \
+              realib_libz_e2e \
+              realib_yamlcpp_e2e \
+              realib_protobuflite_e2e \
+              realib_cpp_business_e2e \
+              realib_matrix_e2e
       - name: Run bionic EH and realib e2e layer
         working-directory: src
         env:

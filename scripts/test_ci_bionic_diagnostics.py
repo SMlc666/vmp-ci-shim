@@ -45,10 +45,12 @@ class LayeredWorkflowTest(unittest.TestCase):
         self.assertIn("SOURCE_CHECKOUT_OK", self.checkout)
 
     def test_realib_targets_are_built_once_and_run_directly(self) -> None:
+        self.assertIn("build-e2e-targets.sh", self.workflow)
         self.assertIn("run-e2e-targets.sh", self.workflow)
         self.assertNotIn("Precompile realib e2e binaries", self.workflow)
         self.assertNotIn("run_realib_suite", self.workflow)
-        self.assertIn("--no-run --quiet", self.runner)
+        self.assertIn("--no-run --quiet", (SCRIPTS / "build-e2e-targets.sh").read_text(encoding="utf-8"))
+        self.assertNotIn("cargo test", self.runner)
         self.assertIn('"$binary" --nocapture', self.runner)
         for suite in REALIB_SUITES:
             with self.subTest(suite=suite):

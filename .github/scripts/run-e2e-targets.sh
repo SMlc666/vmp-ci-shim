@@ -9,21 +9,6 @@ if [[ $# -eq 0 ]]; then
   exit 1
 fi
 
-run_cargo() {
-  if [[ "${BIONIC_MODE:-0}" == "1" ]]; then
-    env \
-      HOME="${BIONIC_HOME:?BIONIC_HOME is required}" \
-      PATH="${BIONIC_PREFIX:?BIONIC_PREFIX is required}/bin:/tmp/host-toolchain-cleanbin:${PATH}" \
-      LD_LIBRARY_PATH="$BIONIC_PREFIX/lib" \
-      CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$BIONIC_HOME/target}" \
-      CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$BIONIC_PREFIX/bin/clang" \
-      CARGO_TARGET_AARCH64_LINUX_ANDROID_AR="$BIONIC_PREFIX/bin/llvm-ar" \
-      "$BIONIC_PREFIX/bin/cargo" "$@"
-  else
-    cargo "$@"
-  fi
-}
-
 run_binary() {
   if [[ "${BIONIC_MODE:-0}" == "1" ]]; then
     env \
@@ -47,9 +32,8 @@ run_target() {
     target_dir="$PWD/$target_dir"
   fi
 
-  echo "=== building e2e target $target ===" | tee -a "$log_path"
-  run_cargo test -p vmp-lifter --test "$target" --no-run --quiet 2>&1 | tee -a "$log_path"
-  build_rc=${PIPESTATUS[0]}
+  echo "=== locating e2e target $target ===" | tee -a "$log_path"
+  build_rc=0
 
   if [[ $build_rc -eq 0 ]]; then
     local binary
