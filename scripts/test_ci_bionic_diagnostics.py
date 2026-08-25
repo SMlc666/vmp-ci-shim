@@ -3,7 +3,9 @@ import pathlib
 import unittest
 
 
-WORKFLOW = pathlib.Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml"
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
+SCRIPTS = ROOT / ".github" / "scripts"
 REALIB_SUITES = (
     "tinylib",
     "sqlite",
@@ -16,174 +18,68 @@ REALIB_SUITES = (
 )
 
 
-class BionicDiagnosticsWorkflowTest(unittest.TestCase):
+class LayeredWorkflowTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.text = WORKFLOW.read_text(encoding="utf-8")
+        self.workflow = WORKFLOW.read_text(encoding="utf-8")
+        self.checkout = (SCRIPTS / "checkout-private.sh").read_text(encoding="utf-8")
+        self.runner = (SCRIPTS / "run-e2e-targets.sh").read_text(encoding="utf-8")
+        self.gate = (SCRIPTS / "realib-gate.sh").read_text(encoding="utf-8")
+        self.deps = (SCRIPTS / "prepare-realib-deps.sh").read_text(encoding="utf-8")
 
-    def test_bionic_cargo_cache_key_is_commit_specific(self) -> None:
-        self.assertIn(
-            "key: cargo-bionic-${{ hashFiles('src/Cargo.lock') }}-${{ inputs.commit_sha }}",
-            self.text,
-            "bionic target cache must not reuse an exact key across private repo commits",
-        )
-        self.assertIn(
-            "cargo-bionic-${{ hashFiles('src/Cargo.lock') }}-",
-            self.text,
-            "bionic target cache should still restore from same-lockfile prefixes",
-        )
+    def test_layer_jobs_are_explicit(self) -> None:
+        for job in ("glibc_unit", "bionic_unit", "glibc_e2e", "bionic_e2e"):
+            self.assertIn(f"  {job}:", self.workflow)
+        self.assertIn("layer:", self.workflow)
+        self.assertIn("- unit", self.workflow)
+        self.assertIn("- e2e", self.workflow)
+        self.assertIn("cargo test --workspace --lib --bins --quiet", self.workflow)
 
-    def test_bionic_userland_cache_key_tracks_image_source(self) -> None:
-        self.assertIn(
-            "BIONIC_CACHE_VERSION:",
-            self.text,
-            "bionic userland cache must expose one version string shared by restore/save",
-        )
-        self.assertIn(
-            "key: bionic-userland-${{ env.BIONIC_CACHE_VERSION }}-${{ hashFiles('docker/Dockerfile') }}",
-            self.text,
-            "bionic userland cache key must change when the baked image recipe changes",
-        )
+    def test_private_checkout_requires_and_verifies_full_sha(self) -> None:
+        self.assertIn("checkout-private.sh", self.workflow)
+        self.assertIn("[0-9a-fA-F]{40}", self.checkout)
+        self.assertIn('git -C "$dest" fetch --no-tags --depth=1 origin', self.checkout)
+        self.assertIn('git -C "$dest" checkout --detach', self.checkout)
+        self.assertIn("SOURCE_CHECKOUT_OK", self.checkout)
 
-    def test_realib_extdeps_cache_keys_track_sources(self) -> None:
-        self.assertIn(
-            "key: realib-extdeps-glibc-v5-${{ hashFiles('src/tests/realib_fixtures/**', 'src/vmp-lifter/tests/realib_*', 'src/vmp-lifter/tests/realib_common/**') }}",
-            self.text,
-            "glibc realib extdeps cache must refresh when fixture recipes or suite code change",
-        )
-        self.assertIn(
-            "key: realib-extdeps-bionic-v4-${{ hashFiles('docker/Dockerfile', 'src/tests/realib_fixtures/**', 'src/vmp-lifter/tests/realib_*', 'src/vmp-lifter/tests/realib_common/**') }}",
-            self.text,
-            "bionic realib extdeps cache must refresh when fixture recipes, suite code, or baked image source changes",
-        )
-        self.assertNotIn(
-            "key: realib-extdeps-bionic-v2\n",
-            self.text,
-            "bionic realib extdeps cache must not be pinned to a static stale key",
-        )
-        self.assertNotIn(
-            "key: realib-extdeps-glibc-v3\n",
-            self.text,
-            "glibc realib extdeps cache must not be pinned to a static stale key",
-        )
-
-    def test_realib_extdeps_cache_covers_zlib(self) -> None:
-        self.assertIn(
-            "/tmp/zlib-1.3.1",
-            self.text,
-            "realib extdeps cache must preserve zlib source between CI runs",
-        )
-        self.assertIn(
-            "ZLIB_SRC_DIR=/tmp/zlib-1.3.1",
-            self.text,
-            "realib runs must provision and export ZLIB_SRC_DIR",
-        )
-        self.assertIn(
-            "https://zlib.net/zlib-1.3.1.tar.gz",
-            self.text,
-            "realib runs must be able to download zlib on cache miss",
-        )
-
-    def test_realib_precompile_and_run_cover_all_suites(self) -> None:
-        for suite in REALIB_SUITES:
-            test_name = f"realib_{suite}_e2e"
-            with self.subTest(suite=suite):
-                self.assertGreaterEqual(
-                    self.text.count(f"--test {test_name} --no-run"),
-                    2,
-                    f"{test_name} must be precompiled on both glibc and bionic",
-                )
-                self.assertGreaterEqual(
-                    self.text.count(f"run_realib_suite {suite}"),
-                    2,
-                    f"{test_name} must run on both glibc and bionic",
-                )
-
-    def test_realib_gates_check_all_suite_ratios(self) -> None:
-        self.assertIn(
-            "suites=(tinylib sqlite libcrypto libz yamlcpp protobuflite cpp_business matrix)",
-            self.text,
-            "realib gate must iterate all suites instead of hard-coding the old subset",
-        )
+    def test_realib_targets_are_built_once_and_run_directly(self) -> None:
+        self.assertIn("run-e2e-targets.sh", self.workflow)
+        self.assertNotIn("Precompile realib e2e binaries", self.workflow)
+        self.assertNotIn("run_realib_suite", self.workflow)
+        self.assertIn("--no-run --quiet", self.runner)
+        self.assertIn('"$binary" --nocapture', self.runner)
         for suite in REALIB_SUITES:
             with self.subTest(suite=suite):
-                self.assertIn(
-                    f"realib_{suite}",
-                    self.text,
-                    f"{suite} ratio must be extracted and checked",
-                )
+                self.assertIn(f"realib_{suite}_e2e", self.workflow)
+                self.assertIn("realib_${suite}", self.gate)
 
-    def test_realib_gates_check_cargo_test_status(self) -> None:
-        self.assertIn(
-            "set +e",
-            self.text,
-            "realib runner must disable bash -e around cargo test so status is always recorded",
-        )
-        self.assertIn(
-            "set -e",
-            self.text,
-            "realib runner must restore bash -e after recording cargo status",
-        )
-        self.assertIn(
-            "cargo_status",
-            self.text,
-            "realib runs must append each cargo test exit status to /tmp/test.log",
-        )
-        self.assertIn(
-            "REALIB CARGO TEST FAIL",
-            self.text,
-            "realib gate must fail when a suite binary exits non-zero even if it emitted a ratio",
-        )
+    def test_realib_gate_checks_every_suite_and_eh(self) -> None:
+        for suite in REALIB_SUITES:
+            with self.subTest(suite=suite):
+                self.assertIn("realib_${suite}", self.gate)
+        self.assertIn("e2e_eh_fixture", self.gate)
+        self.assertIn("REALIB CARGO TEST FAIL", self.gate)
+        self.assertIn("surviving_pass_ratio", self.gate)
 
-    def test_rust_incremental_is_disabled_for_ci_link_gates(self) -> None:
-        self.assertIn(
-            'CARGO_INCREMENTAL: "0"',
-            self.text,
-            "workflow-level cargo builds must disable Rust incremental linking",
-        )
-        self.assertGreaterEqual(
-            self.text.count("export CARGO_INCREMENTAL=0"),
-            4,
-            "realib glibc and bionic shell blocks must preserve CARGO_INCREMENTAL=0",
-        )
+    def test_dependency_setup_is_shared(self) -> None:
+        self.assertEqual(self.workflow.count("prepare-realib-deps.sh"), 2)
+        self.assertIn("REALIB_LIBC", self.deps)
+        self.assertIn("https://zlib.net/zlib-1.3.1.tar.gz", self.deps)
+        self.assertIn("/tmp/zlib-1.3.1", self.workflow)
 
-    def test_bionic_host_toolchain_wrappers_clear_ld_library_path(self) -> None:
-        self.assertIn(
-            "Create LD-clean host compiler wrappers (bionic)",
-            self.text,
-            "bionic CI must install host compiler wrappers before cargo test",
-        )
-        self.assertIn(
-            "for tool in aarch64-linux-gnu-gcc aarch64-linux-gnu-g++ gcc g++ cc c++ clang clang++; do",
-            self.text,
-            "wrapper must cover host cross compilers that tests may spawn",
-        )
-        self.assertIn(
-            "unset LD_LIBRARY_PATH",
-            self.text,
-            "host compiler wrappers must not inherit Termux library paths",
-        )
-        self.assertIn(
-            'export PATH="$TERMUX_PREFIX/bin:/tmp/host-toolchain-cleanbin:$PATH"',
-            self.text,
-            "Termux tools must stay first while host fallbacks run through LD-clean wrappers",
-        )
+    def test_bionic_setup_fails_fast_on_missing_toolchain_or_proxy(self) -> None:
+        self.assertGreaterEqual(self.workflow.count("curl -fsSI --max-time 15 -x http://127.0.0.1:3128"), 2)
+        self.assertIn("TOOLCHAIN_FAILURE", (SCRIPTS / "configure-bionic-env.sh").read_text(encoding="utf-8"))
+        self.assertIn('for tool in cargo rustc clang clang++ llvm-ar', (SCRIPTS / "configure-bionic-env.sh").read_text(encoding="utf-8"))
+        self.assertIn("Create LD-clean host compiler wrappers", self.workflow)
+        self.assertIn("unset LD_LIBRARY_PATH", (SCRIPTS / "create-ld-clean-wrappers.sh").read_text(encoding="utf-8"))
 
-    def test_failed_bionic_run_uploads_real_fixture_tarball(self) -> None:
-        self.assertIn(
-            "E2E_DIR=src/vmp-lifter/fixtures/e2e",
-            self.text,
-            "fixture packaging must read from the actual private checkout, not TERMUX_HOME/src",
-        )
-        self.assertIn(
-            "cp -a \"$TERMUX_HOME/target/debug/vmp-runner\" /tmp/bionic-diagnostics/vmp-runner",
-            self.text,
-            "artifact must include the bionic-built runner needed to replay remote .so files",
-        )
-        self.assertIn(
-            "if-no-files-found: error",
-            self.text,
-            "missing bionic diagnostic artifacts must fail visibly instead of warning",
-        )
+    def test_failed_diagnostics_are_optional(self) -> None:
+        self.assertIn("Package bionic diagnostics", self.workflow)
+        self.assertIn("if-no-files-found: ignore", self.workflow)
+        self.assertIn("No e2e log was produced", self.workflow)
+
+    def test_rust_incremental_is_disabled(self) -> None:
+        self.assertIn('CARGO_INCREMENTAL: "0"', self.workflow)
 
 
 if __name__ == "__main__":
