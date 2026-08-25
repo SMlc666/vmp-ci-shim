@@ -28,6 +28,21 @@ fetch_tarball() {
 }
 
 if [[ "$libc" == glibc ]]; then
+  rm -rf /tmp/zlib-system
+  mkdir -p /tmp/zlib-system
+  for lib_dir in /lib/aarch64-linux-gnu /usr/lib/aarch64-linux-gnu /lib /usr/lib; do
+    if [[ -d "$lib_dir" ]]; then
+      cp -a "$lib_dir"/libz.so* /tmp/zlib-system/ 2>/dev/null || true
+    fi
+  done
+  if ! find /tmp/zlib-system -maxdepth 1 -type f -name 'libz.so.*' | grep -q .; then
+    echo "DEPENDENCY_FETCH_FAILURE: no glibc libz.so.* could be staged" >&2
+    exit 1
+  fi
+  latest_zlib=$(find /tmp/zlib-system -maxdepth 1 -type f -name 'libz.so.*' | sort | tail -1)
+  ln -sf "$(basename "$latest_zlib")" /tmp/zlib-system/libz.so
+  export ZLIB_DIR=/tmp/zlib-system
+
   if [[ ! -f /tmp/sqlite-amalgamation-3450300/sqlite3.c ]]; then
     curl -fL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 180 \
       https://sqlite.org/2024/sqlite-amalgamation-3450300.zip -o /tmp/sqlite.zip
@@ -75,6 +90,8 @@ else
   exit 2
 fi
 
+export ZLIB_DIR="${ZLIB_DIR:-}"
+
 if [[ ! -f /tmp/zlib-1.3.1/zlib.h ]]; then
   rm -rf /tmp/zlib-1.3.1
   mkdir -p /tmp/zlib-1.3.1
@@ -104,6 +121,7 @@ cat >> "${GITHUB_ENV:?GITHUB_ENV is required}" <<EOF
 SQLITE_SRC_DIR=/tmp/sqlite-amalgamation-3450300
 OPENSSL_DIR=/tmp/openssl-1.1.1w
 ZLIB_SRC_DIR=/tmp/zlib-1.3.1
+ZLIB_DIR=${ZLIB_DIR:-}
 YAMLCPP_SRC_DIR=/tmp/yaml-cpp-0.9.0
 PROTOBUF_SRC_DIR=/tmp/protobuf-31.1
 EOF

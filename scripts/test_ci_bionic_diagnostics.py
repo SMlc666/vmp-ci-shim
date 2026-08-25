@@ -51,7 +51,7 @@ class LayeredWorkflowTest(unittest.TestCase):
         self.assertNotIn("run_realib_suite", self.workflow)
         self.assertIn("--no-run --quiet", (SCRIPTS / "build-e2e-targets.sh").read_text(encoding="utf-8"))
         self.assertNotIn("cargo test", self.runner)
-        self.assertIn('"$binary" --nocapture', self.runner)
+        self.assertIn('"$binary" --nocapture --test-threads=1', self.runner)
         for suite in REALIB_SUITES:
             with self.subTest(suite=suite):
                 self.assertIn(f"realib_{suite}_e2e", self.workflow)
