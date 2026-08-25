@@ -512,6 +512,7 @@ jobs:
           VMP_REALIB_PROGRESS: "1"
           CC: /data/data/com.termux/files/usr/bin/clang
           CXX: /data/data/com.termux/files/usr/bin/clang++
+          VMP_REALIB_LLVM_STRIP: /data/data/com.termux/files/usr/bin/llvm-strip
           TEST_LOG: /tmp/test.log
         run: |
           set -euo pipefail

@@ -65,6 +65,7 @@ e2e_shard_plan() {
         realib_cpp_business_e2e realib_cpp_business cpp_business_suite_policy_ultra_no_regressions
         realib_cpp_business_e2e realib_cpp_business cpp_business_suite_phase2_waterfall_ultra
         realib_cpp_business_e2e realib_cpp_business cpp_business_suite_policy_v6_v18_1_public
+        realib_cpp_business_e2e realib_cpp_business cpp_business_v6_public_strip_tools_preserve_runtime
         realib_cpp_business_e2e realib_cpp_business cpp_business_v18_1_entry_signature_scan
         realib_cpp_business_e2e realib_cpp_business cpp_business_v6_policy_public_protect
       )
@@ -112,6 +113,7 @@ e2e_shard_plan() {
         realib_cpp_business_e2e realib_cpp_business cpp_business_suite_policy_ultra_no_regressions
         realib_cpp_business_e2e realib_cpp_business cpp_business_suite_phase2_waterfall_ultra
         realib_cpp_business_e2e realib_cpp_business cpp_business_suite_policy_v6_v18_1_public
+        realib_cpp_business_e2e realib_cpp_business cpp_business_v6_public_strip_tools_preserve_runtime
         realib_cpp_business_e2e realib_cpp_business cpp_business_v18_1_entry_signature_scan
         realib_cpp_business_e2e realib_cpp_business cpp_business_v6_policy_public_protect
       )
