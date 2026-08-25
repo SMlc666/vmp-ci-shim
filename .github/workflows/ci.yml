@@ -309,6 +309,7 @@ jobs:
           VMP_REALIB_E2E: "1"
           VMP_REALIB_ISOLATE_FIXTURES: "1"
           VMP_REALIB_TEST_THREADS: "2"
+          VMP_REALIB_SERIAL_TARGETS: "realib_cpp_business_e2e"
           CC: gcc
           TEST_LOG: /tmp/test.log
         run: |
@@ -488,6 +489,7 @@ jobs:
           VMP_REALIB_E2E: "1"
           VMP_REALIB_ISOLATE_FIXTURES: "1"
           VMP_REALIB_TEST_THREADS: "2"
+          VMP_REALIB_SERIAL_TARGETS: "realib_cpp_business_e2e"
           CC: /data/data/com.termux/files/usr/bin/clang
           CXX: /data/data/com.termux/files/usr/bin/clang++
           TEST_LOG: /tmp/test.log

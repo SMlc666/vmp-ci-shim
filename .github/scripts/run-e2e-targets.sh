@@ -49,6 +49,9 @@ run_target() {
       # CI can opt into per-test fixture copies, which makes the test harness
       # safe to parallelize without clobbering another case's build outputs.
       local test_threads=${VMP_REALIB_TEST_THREADS:-1}
+      case " ${VMP_REALIB_SERIAL_TARGETS:-} " in
+        *" ${target} "*) test_threads=1 ;;
+      esac
       run_binary "$binary" --nocapture --test-threads="$test_threads" 2>&1 | tee -a "$log_path"
       run_rc=${PIPESTATUS[0]}
     fi

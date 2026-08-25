@@ -12,6 +12,8 @@ for target in "$@"; do
 done
 cargo_args+=(--no-run --quiet)
 
+# The integration tests invoke the protector binary directly. Build it from
+# this checkout instead of relying on a stale target-cache executable.
 if [[ "${BIONIC_MODE:-0}" == "1" ]]; then
   : "${BIONIC_PREFIX:?BIONIC_PREFIX is required}"
   : "${BIONIC_HOME:?BIONIC_HOME is required}"
@@ -22,8 +24,10 @@ if [[ "${BIONIC_MODE:-0}" == "1" ]]; then
     CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$BIONIC_HOME/target}" \
     CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$BIONIC_PREFIX/bin/clang" \
     CARGO_TARGET_AARCH64_LINUX_ANDROID_AR="$BIONIC_PREFIX/bin/llvm-ar" \
+    "$BIONIC_PREFIX/bin/cargo" build -p vmp-lifter --bin vmp-lifter --quiet
     "$BIONIC_PREFIX/bin/cargo" test "${cargo_args[@]}"
 else
+  cargo build -p vmp-lifter --bin vmp-lifter --quiet
   cargo test "${cargo_args[@]}"
 fi
 

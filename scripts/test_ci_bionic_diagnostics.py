@@ -50,10 +50,13 @@ class LayeredWorkflowTest(unittest.TestCase):
         self.assertIn("run-e2e-targets.sh", self.workflow)
         self.assertNotIn("Precompile realib e2e binaries", self.workflow)
         self.assertNotIn("run_realib_suite", self.workflow)
-        self.assertIn("--no-run --quiet", (SCRIPTS / "build-e2e-targets.sh").read_text(encoding="utf-8"))
+        build_script = (SCRIPTS / "build-e2e-targets.sh").read_text(encoding="utf-8")
+        self.assertIn("--no-run --quiet", build_script)
+        self.assertIn("cargo build -p vmp-lifter --bin vmp-lifter", build_script)
         self.assertNotIn("cargo test", self.runner)
         self.assertIn('VMP_REALIB_TEST_THREADS', self.runner)
         self.assertIn('--test-threads="$test_threads"', self.runner)
+        self.assertIn("VMP_REALIB_SERIAL_TARGETS", self.runner)
         for suite in REALIB_SUITES:
             with self.subTest(suite=suite):
                 self.assertIn(f"realib_{suite}_e2e", self.plan)
