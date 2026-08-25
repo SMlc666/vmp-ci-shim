@@ -316,6 +316,8 @@ jobs:
           VMP_REALIB_ISOLATE_FIXTURES: "1"
           VMP_REALIB_BASELINE_CACHE: /tmp/vmp-realib-baselines-${{ inputs.commit_sha }}
           VMP_REALIB_PYTHON: ${{ runner.temp }}/vmp-python/bin/python
+          OBJCOPY: objcopy
+          VMP_REALIB_SERIAL_TARGETS: "realib_matrix_e2e"
           VMP_REALIB_TEST_THREADS: "2"
           CC: gcc
           TEST_LOG: /tmp/test.log
@@ -503,6 +505,8 @@ jobs:
           VMP_REALIB_ISOLATE_FIXTURES: "1"
           VMP_REALIB_BASELINE_CACHE: /data/data/com.termux/files/usr/tmp/vmp-realib-baselines-${{ inputs.commit_sha }}
           VMP_REALIB_PYTHON: ${{ runner.temp }}/vmp-python/bin/python
+          OBJCOPY: objcopy
+          VMP_REALIB_SERIAL_TARGETS: "realib_matrix_e2e"
           VMP_REALIB_TEST_THREADS: "2"
           CC: /data/data/com.termux/files/usr/bin/clang
           CXX: /data/data/com.termux/files/usr/bin/clang++

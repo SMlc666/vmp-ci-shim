@@ -5,7 +5,7 @@ set -euo pipefail
 : "${TERMUX_HOME:?TERMUX_HOME is required}"
 : "${GITHUB_WORKSPACE:?GITHUB_WORKSPACE is required}"
 
-for tool in cargo rustc clang clang++ llvm-ar; do
+for tool in cargo rustc clang clang++ llvm-ar llvm-readobj; do
   if [[ ! -x "$TERMUX_PREFIX/bin/$tool" ]]; then
     echo "TOOLCHAIN_FAILURE: missing executable $TERMUX_PREFIX/bin/$tool" >&2
     exit 1
