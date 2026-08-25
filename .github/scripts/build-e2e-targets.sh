@@ -24,8 +24,14 @@ if [[ "${BIONIC_MODE:-0}" == "1" ]]; then
     CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$BIONIC_HOME/target}" \
     CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$BIONIC_PREFIX/bin/clang" \
     CARGO_TARGET_AARCH64_LINUX_ANDROID_AR="$BIONIC_PREFIX/bin/llvm-ar" \
-    "$BIONIC_PREFIX/bin/cargo" build -p vmp-lifter --bin vmp-lifter --quiet
-    "$BIONIC_PREFIX/bin/cargo" test "${cargo_args[@]}"
+    env \
+      HOME="$BIONIC_HOME" \
+      PATH="$BIONIC_PREFIX/bin:/tmp/host-toolchain-cleanbin:${PATH}" \
+      LD_LIBRARY_PATH="$BIONIC_PREFIX/lib" \
+      CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$BIONIC_HOME/target}" \
+      CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$BIONIC_PREFIX/bin/clang" \
+      CARGO_TARGET_AARCH64_LINUX_ANDROID_AR="$BIONIC_PREFIX/bin/llvm-ar" \
+      "$BIONIC_PREFIX/bin/cargo" test "${cargo_args[@]}"
 else
   cargo build -p vmp-lifter --bin vmp-lifter --quiet
   cargo test "${cargo_args[@]}"
