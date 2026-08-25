@@ -57,8 +57,18 @@ run_target() {
       if [[ "$filter" != "-" ]]; then
         test_args+=("$filter")
       fi
-      run_binary "$binary" "${test_args[@]}" --nocapture --test-threads="$test_threads" 2>&1 | tee -a "$log_path"
+      local run_log
+      run_log=$(mktemp "${TMPDIR:-/tmp}/e2e-run.XXXXXX")
+      run_binary "$binary" "${test_args[@]}" --nocapture --test-threads="$test_threads" 2>&1 \
+        | tee "$run_log" \
+        | tee -a "$log_path"
       run_rc=${PIPESTATUS[0]}
+      if [[ "$filter" != "-" ]] && grep -Eq '(^|[[:space:]])running 0 tests?([[:space:]]|$)' "$run_log"; then
+        echo "E2E_RUNNER_FAILURE: filter matched zero tests: target=$target label=$label filter=$filter" \
+          | tee -a "$log_path"
+        run_rc=125
+      fi
+      rm -f "$run_log"
     fi
   else
     run_rc=$build_rc

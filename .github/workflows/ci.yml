@@ -319,6 +319,7 @@ jobs:
           OBJCOPY: objcopy
           VMP_REALIB_SERIAL_TARGETS: "realib_matrix_e2e"
           VMP_REALIB_TEST_THREADS: "2"
+          VMP_REALIB_PROGRESS: "1"
           CC: gcc
           TEST_LOG: /tmp/test.log
         run: |
@@ -508,6 +509,7 @@ jobs:
           OBJCOPY: objcopy
           VMP_REALIB_SERIAL_TARGETS: "realib_matrix_e2e"
           VMP_REALIB_TEST_THREADS: "2"
+          VMP_REALIB_PROGRESS: "1"
           CC: /data/data/com.termux/files/usr/bin/clang
           CXX: /data/data/com.termux/files/usr/bin/clang++
           TEST_LOG: /tmp/test.log

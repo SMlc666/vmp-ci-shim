@@ -21,7 +21,20 @@ status_for() {
 
 ratio_for() {
   local suite=$1
-  sed -n "s/.*\[realib_${suite}\] surviving_pass_ratio = \([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p" "$log_path" | tail -1
+  sed -n "s/.*\[realib_${suite}\] surviving_pass_ratio = \([0-9][0-9]*\.[0-9][0-9]*\).*/\1/p" "$log_path"
+}
+
+worst_ratio_for() {
+  local suite=$1
+  local ratios
+  ratios=$(ratio_for "$suite")
+  if [[ -z "$ratios" ]]; then
+    printf '0.0\n'
+    return 0
+  fi
+  # A label can represent several filtered test processes. Gate the minimum
+  # observed ratio so a later passing slice cannot hide an earlier regression.
+  awk 'NR == 1 { min = $1; next } { if ($1 < min) min = $1 } END { print min }' <<<"$ratios"
 }
 
 printf 'Realib gate\n' >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
@@ -47,10 +60,9 @@ for suite in "${suites[@]}"; do
   if [[ "$suite" == matrix || "$suite" == e2e_eh_fixture ]]; then
     ratio=N/A
   else
-    ratio=$(ratio_for "$suite")
-    ratio=${ratio:-0.0}
+    ratio=$(worst_ratio_for "$suite")
     if ! awk "BEGIN {exit !($ratio >= 1.0)}"; then
-      echo "${suite}: GATE FAIL: ratio=$ratio < 1.0"
+      echo "${suite}: GATE FAIL: minimum observed ratio=$ratio < 1.0"
       gate_fail=1
       result=FAIL
     fi
