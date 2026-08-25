@@ -46,10 +46,10 @@ run_target() {
       run_rc=127
     else
       echo "=== running e2e target $target ===" | tee -a "$log_path"
-      # Realib tests share fixture build directories and process-wide locks;
-      # serialize cases within each target to avoid deleting a sibling test's
-      # freshly-built fixture while retaining suite-level job parallelism.
-      run_binary "$binary" --nocapture --test-threads=1 2>&1 | tee -a "$log_path"
+      # CI can opt into per-test fixture copies, which makes the test harness
+      # safe to parallelize without clobbering another case's build outputs.
+      local test_threads=${VMP_REALIB_TEST_THREADS:-1}
+      run_binary "$binary" --nocapture --test-threads="$test_threads" 2>&1 | tee -a "$log_path"
       run_rc=${PIPESTATUS[0]}
     fi
   else

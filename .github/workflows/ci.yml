@@ -21,6 +21,15 @@ on:
           - unit
           - e2e
         default: all
+      e2e_instances:
+        description: 'Number of independent E2E runners (1, 2, or 4)'
+        required: false
+        type: choice
+        options:
+          - '1'
+          - '2'
+          - '4'
+        default: '2'
       oracle_litmus:
         description: 'Run the Cat 2B differential-oracle litmus on bionic'
         required: false
@@ -28,13 +37,31 @@ on:
         default: false
 
 concurrency:
-  group: ci-${{ github.event.inputs.commit_sha }}-${{ github.event.inputs.layer || 'all' }}
+  group: ci-${{ github.event.inputs.commit_sha }}-${{ github.event.inputs.layer || 'all' }}-${{ github.event.inputs.e2e_instances || '2' }}
   cancel-in-progress: true
 
 env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
+  e2e_plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - id: plan
+        env:
+          E2E_INSTANCES: ${{ inputs.e2e_instances || '2' }}
+        run: |
+          set -euo pipefail
+          case "$E2E_INSTANCES" in
+            1) matrix='{"shard":[0]}' ;;
+            2) matrix='{"shard":[0,1]}' ;;
+            4) matrix='{"shard":[0,1,2,3]}' ;;
+            *) echo "E2E_PLAN_FAILURE: unsupported e2e_instances=$E2E_INSTANCES" >&2; exit 2 ;;
+          esac
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
   public_demo:
     if: ${{ inputs.layer == 'all' || inputs.layer == 'unit' }}
     runs-on: ubuntu-24.04-arm
@@ -217,6 +244,11 @@ jobs:
 
   glibc_e2e:
     if: ${{ inputs.layer == 'all' || inputs.layer == 'e2e' }}
+    needs: e2e_plan
+    name: glibc_e2e (shard ${{ matrix.shard }}/${{ inputs.e2e_instances || '2' }})
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.e2e_plan.outputs.matrix) }}
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
@@ -235,6 +267,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src
+          shared-key: glibc-e2e
       - name: Restore glibc realib dependency cache
         id: realib_cache
         uses: actions/cache/restore@v4
@@ -259,38 +292,41 @@ jobs:
         run: .github/scripts/prepare-realib-deps.sh
       - name: Build E2E targets once
         working-directory: src
+        env:
+          E2E_INSTANCES: ${{ inputs.e2e_instances || '2' }}
+          E2E_SHARD: ${{ matrix.shard }}
         run: |
-          "$GITHUB_WORKSPACE/.github/scripts/build-e2e-targets.sh" \
-            eh_fixture_e2e \
-            realib_tinylib_e2e \
-            realib_sqlite_e2e \
-            realib_libcrypto_e2e \
-            realib_libz_e2e \
-            realib_yamlcpp_e2e \
-            realib_protobuflite_e2e \
-            realib_cpp_business_e2e \
-            realib_matrix_e2e
+          set -euo pipefail
+          source "$GITHUB_WORKSPACE/.github/scripts/e2e-shard-plan.sh"
+          e2e_shard_plan "$E2E_INSTANCES" "$E2E_SHARD"
+          printf 'E2E shard %s/%s targets: %s\n' "$E2E_SHARD" "$E2E_INSTANCES" "${E2E_TARGETS[*]}"
+          "$GITHUB_WORKSPACE/.github/scripts/build-e2e-targets.sh" "${E2E_TARGETS[@]}"
       - name: Run glibc EH and realib e2e layer
         working-directory: src
         env:
+          E2E_INSTANCES: ${{ inputs.e2e_instances || '2' }}
+          E2E_SHARD: ${{ matrix.shard }}
           VMP_REALIB_E2E: "1"
+          VMP_REALIB_ISOLATE_FIXTURES: "1"
+          VMP_REALIB_TEST_THREADS: "4"
           CC: gcc
           TEST_LOG: /tmp/test.log
         run: |
-          "$GITHUB_WORKSPACE/.github/scripts/run-e2e-targets.sh" \
-            eh_fixture_e2e e2e_eh_fixture \
-            realib_tinylib_e2e realib_tinylib \
-            realib_sqlite_e2e realib_sqlite \
-            realib_libcrypto_e2e realib_libcrypto \
-            realib_libz_e2e realib_libz \
-            realib_yamlcpp_e2e realib_yamlcpp \
-            realib_protobuflite_e2e realib_protobuflite \
-            realib_cpp_business_e2e realib_cpp_business \
-            realib_matrix_e2e realib_matrix
+          set -euo pipefail
+          source "$GITHUB_WORKSPACE/.github/scripts/e2e-shard-plan.sh"
+          e2e_shard_plan "$E2E_INSTANCES" "$E2E_SHARD"
+          "$GITHUB_WORKSPACE/.github/scripts/run-e2e-targets.sh" "${E2E_PAIRS[@]}"
       - name: Check glibc e2e gate
-        run: .github/scripts/realib-gate.sh /tmp/test.log
+        env:
+          E2E_INSTANCES: ${{ inputs.e2e_instances || '2' }}
+          E2E_SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          source "$GITHUB_WORKSPACE/.github/scripts/e2e-shard-plan.sh"
+          e2e_shard_plan "$E2E_INSTANCES" "$E2E_SHARD"
+          "$GITHUB_WORKSPACE/.github/scripts/realib-gate.sh" /tmp/test.log "${E2E_SUITES[@]}"
       - name: Save glibc realib dependency cache
-        if: ${{ always() && steps.realib_cache.outcome == 'success' && steps.realib_cache.outputs.cache-hit != 'true' }}
+        if: ${{ always() && matrix.shard == 0 && steps.realib_cache.outcome == 'success' && steps.realib_cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
           path: |
@@ -302,7 +338,7 @@ jobs:
             /tmp/zlib-system
           key: realib-extdeps-glibc-layered-v1-${{ hashFiles('src/tests/realib_fixtures/**', 'src/vmp-lifter/tests/realib_*', 'src/vmp-lifter/tests/realib_common/**') }}
       - name: Save glibc EH fixture cache
-        if: ${{ always() && steps.eh_cache.outcome == 'success' && steps.eh_cache.outputs.cache-hit != 'true' }}
+        if: ${{ always() && matrix.shard == 0 && steps.eh_cache.outcome == 'success' && steps.eh_cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
           path: src/tests/cpp_fixtures/eh_fixture/build
@@ -311,13 +347,18 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-log-glibc-${{ inputs.commit_sha }}
+          name: e2e-log-glibc-${{ inputs.commit_sha }}-${{ matrix.shard }}
           path: /tmp/test.log
           retention-days: 7
           if-no-files-found: ignore
 
   bionic_e2e:
     if: ${{ inputs.layer == 'all' || inputs.layer == 'e2e' }}
+    needs: e2e_plan
+    name: bionic_e2e (shard ${{ matrix.shard }}/${{ inputs.e2e_instances || '2' }})
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.e2e_plan.outputs.matrix) }}
     runs-on: ubuntu-24.04-arm
     env:
       TERMUX_PREFIX: /data/data/com.termux/files/usr
@@ -371,7 +412,7 @@ jobs:
           "$TERMUX_PREFIX/bin/git" --version
           sudo tar -cf /tmp/bionic-userland.tar /data/data/com.termux /system 2>/dev/null
       - name: Save bionic userland cache
-        if: steps.bionic_cache.outputs.cache-hit != 'true'
+        if: ${{ matrix.shard == 0 && steps.bionic_cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
           path: /tmp/bionic-userland.tar
@@ -393,8 +434,9 @@ jobs:
             /data/data/com.termux/files/home/.cargo/registry
             /data/data/com.termux/files/home/.cargo/git
             /data/data/com.termux/files/home/target
-          key: cargo-bionic-${{ hashFiles('src/Cargo.lock') }}-${{ inputs.commit_sha }}
+          key: cargo-bionic-${{ hashFiles('src/Cargo.lock') }}-${{ inputs.commit_sha }}-e2e-${{ matrix.shard }}
           restore-keys: |
+            cargo-bionic-${{ hashFiles('src/Cargo.lock') }}-${{ inputs.commit_sha }}-e2e-
             cargo-bionic-${{ hashFiles('src/Cargo.lock') }}-
             cargo-bionic-
       - name: Restore bionic realib dependency cache
@@ -424,48 +466,51 @@ jobs:
         run: .github/scripts/prepare-realib-deps.sh
       - name: Build E2E targets once
         working-directory: src
+        env:
+          E2E_INSTANCES: ${{ inputs.e2e_instances || '2' }}
+          E2E_SHARD: ${{ matrix.shard }}
         run: |
+          set -euo pipefail
+          source "$GITHUB_WORKSPACE/.github/scripts/e2e-shard-plan.sh"
+          e2e_shard_plan "$E2E_INSTANCES" "$E2E_SHARD"
+          printf 'E2E shard %s/%s targets: %s\n' "$E2E_SHARD" "$E2E_INSTANCES" "${E2E_TARGETS[*]}"
           env -u LD_LIBRARY_PATH \
             BIONIC_MODE=1 \
             BIONIC_PREFIX="$TERMUX_PREFIX" \
             BIONIC_HOME="$TERMUX_HOME" \
             CARGO_TARGET_DIR="$TERMUX_HOME/target" \
-            "$GITHUB_WORKSPACE/.github/scripts/build-e2e-targets.sh" \
-              eh_fixture_e2e \
-              realib_tinylib_e2e \
-              realib_sqlite_e2e \
-              realib_libcrypto_e2e \
-              realib_libz_e2e \
-              realib_yamlcpp_e2e \
-              realib_protobuflite_e2e \
-              realib_cpp_business_e2e \
-              realib_matrix_e2e
+            "$GITHUB_WORKSPACE/.github/scripts/build-e2e-targets.sh" "${E2E_TARGETS[@]}"
       - name: Run bionic EH and realib e2e layer
         working-directory: src
         env:
+          E2E_INSTANCES: ${{ inputs.e2e_instances || '2' }}
+          E2E_SHARD: ${{ matrix.shard }}
           VMP_REALIB_E2E: "1"
+          VMP_REALIB_ISOLATE_FIXTURES: "1"
+          VMP_REALIB_TEST_THREADS: "4"
           CC: /data/data/com.termux/files/usr/bin/clang
           TEST_LOG: /tmp/test.log
         run: |
+          set -euo pipefail
+          source "$GITHUB_WORKSPACE/.github/scripts/e2e-shard-plan.sh"
+          e2e_shard_plan "$E2E_INSTANCES" "$E2E_SHARD"
           env -u LD_LIBRARY_PATH \
             BIONIC_MODE=1 \
             BIONIC_PREFIX="$TERMUX_PREFIX" \
             BIONIC_HOME="$TERMUX_HOME" \
             CARGO_TARGET_DIR="$TERMUX_HOME/target" \
-            "$GITHUB_WORKSPACE/.github/scripts/run-e2e-targets.sh" \
-              eh_fixture_e2e e2e_eh_fixture \
-              realib_tinylib_e2e realib_tinylib \
-              realib_sqlite_e2e realib_sqlite \
-              realib_libcrypto_e2e realib_libcrypto \
-              realib_libz_e2e realib_libz \
-              realib_yamlcpp_e2e realib_yamlcpp \
-              realib_protobuflite_e2e realib_protobuflite \
-              realib_cpp_business_e2e realib_cpp_business \
-              realib_matrix_e2e realib_matrix
+            "$GITHUB_WORKSPACE/.github/scripts/run-e2e-targets.sh" "${E2E_PAIRS[@]}"
       - name: Check bionic e2e gate
-        run: .github/scripts/realib-gate.sh /tmp/test.log
+        env:
+          E2E_INSTANCES: ${{ inputs.e2e_instances || '2' }}
+          E2E_SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          source "$GITHUB_WORKSPACE/.github/scripts/e2e-shard-plan.sh"
+          e2e_shard_plan "$E2E_INSTANCES" "$E2E_SHARD"
+          "$GITHUB_WORKSPACE/.github/scripts/realib-gate.sh" /tmp/test.log "${E2E_SUITES[@]}"
       - name: Run optional Cat 2B oracle litmus
-        if: ${{ inputs.oracle_litmus }}
+        if: ${{ inputs.oracle_litmus && matrix.shard == 0 }}
         working-directory: src
         env:
           VMP_ORACLE_LITMUS: "1"
@@ -477,7 +522,7 @@ jobs:
           export CARGO_TARGET_DIR="$TERMUX_HOME/target"
           cargo test -p vmp-lifter --test oracle_litmus -- --nocapture
       - name: Save bionic realib dependency cache
-        if: ${{ always() && steps.realib_cache.outcome == 'success' && steps.realib_cache.outputs.cache-hit != 'true' }}
+        if: ${{ always() && matrix.shard == 0 && steps.realib_cache.outcome == 'success' && steps.realib_cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
           path: |
@@ -495,9 +540,9 @@ jobs:
             /data/data/com.termux/files/home/.cargo/registry
             /data/data/com.termux/files/home/.cargo/git
             /data/data/com.termux/files/home/target
-          key: cargo-bionic-${{ hashFiles('src/Cargo.lock') }}-${{ inputs.commit_sha }}
+          key: cargo-bionic-${{ hashFiles('src/Cargo.lock') }}-${{ inputs.commit_sha }}-e2e-${{ matrix.shard }}
       - name: Save bionic EH fixture cache
-        if: ${{ always() && steps.eh_cache.outcome == 'success' && steps.eh_cache.outputs.cache-hit != 'true' }}
+        if: ${{ always() && matrix.shard == 0 && steps.eh_cache.outcome == 'success' && steps.eh_cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
           path: src/tests/cpp_fixtures/eh_fixture/build
@@ -524,7 +569,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-diagnostics-bionic-${{ inputs.commit_sha }}
+          name: e2e-diagnostics-bionic-${{ inputs.commit_sha }}-${{ matrix.shard }}
           path: /tmp/e2e-fixtures-bionic.tar.gz
           retention-days: 7
           if-no-files-found: ignore
@@ -532,18 +577,19 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-log-bionic-${{ inputs.commit_sha }}
+          name: e2e-log-bionic-${{ inputs.commit_sha }}-${{ matrix.shard }}
           path: /tmp/test.log
           retention-days: 7
           if-no-files-found: ignore
 
   notify_failure:
-    needs: [public_demo, glibc_unit, bionic_unit, glibc_e2e, bionic_e2e]
-    if: ${{ always() && (needs.public_demo.result == 'failure' || needs.glibc_unit.result == 'failure' || needs.bionic_unit.result == 'failure' || needs.glibc_e2e.result == 'failure' || needs.bionic_e2e.result == 'failure') }}
+    needs: [e2e_plan, public_demo, glibc_unit, bionic_unit, glibc_e2e, bionic_e2e]
+    if: ${{ always() && (needs.e2e_plan.result == 'failure' || needs.public_demo.result == 'failure' || needs.glibc_unit.result == 'failure' || needs.bionic_unit.result == 'failure' || needs.glibc_e2e.result == 'failure' || needs.bionic_e2e.result == 'failure') }}
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Send Telegram alert
         env:
+          E2E_PLAN: ${{ needs.e2e_plan.result }}
           PUBLIC: ${{ needs.public_demo.result }}
           GLIBC_UNIT: ${{ needs.glibc_unit.result }}
           BIONIC_UNIT: ${{ needs.bionic_unit.result }}
@@ -557,8 +603,8 @@ jobs:
           CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           set -euo pipefail
-          MSG=$(printf 'CI failed\nbranch: %s\nlayer:  %s\nsha:    %s\npublic: %s\nglibc unit:  %s\nbionic unit: %s\nglibc e2e:   %s\nbionic e2e:  %s\n\nRun: %s\n' \
-            "$BRANCH" "$LAYER" "$SHA" "$PUBLIC" "$GLIBC_UNIT" "$BIONIC_UNIT" "$GLIBC_E2E" "$BIONIC_E2E" "$RUN_URL")
+          MSG=$(printf 'CI failed\nbranch: %s\nlayer:  %s\nsha:    %s\ne2e plan: %s\npublic: %s\nglibc unit:  %s\nbionic unit: %s\nglibc e2e:   %s\nbionic e2e:  %s\n\nRun: %s\n' \
+            "$BRANCH" "$LAYER" "$SHA" "$E2E_PLAN" "$PUBLIC" "$GLIBC_UNIT" "$BIONIC_UNIT" "$GLIBC_E2E" "$BIONIC_E2E" "$RUN_URL")
           if [ ${#MSG} -gt 4000 ]; then MSG="${MSG:0:3900}"; fi
           curl -fsS -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${CHAT_ID}" \

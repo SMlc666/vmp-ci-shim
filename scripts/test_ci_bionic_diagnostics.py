@@ -24,6 +24,7 @@ class LayeredWorkflowTest(unittest.TestCase):
         self.checkout = (SCRIPTS / "checkout-private.sh").read_text(encoding="utf-8")
         self.runner = (SCRIPTS / "run-e2e-targets.sh").read_text(encoding="utf-8")
         self.gate = (SCRIPTS / "realib-gate.sh").read_text(encoding="utf-8")
+        self.plan = (SCRIPTS / "e2e-shard-plan.sh").read_text(encoding="utf-8")
         self.deps = (SCRIPTS / "prepare-realib-deps.sh").read_text(encoding="utf-8")
 
     def test_layer_jobs_are_explicit(self) -> None:
@@ -51,11 +52,20 @@ class LayeredWorkflowTest(unittest.TestCase):
         self.assertNotIn("run_realib_suite", self.workflow)
         self.assertIn("--no-run --quiet", (SCRIPTS / "build-e2e-targets.sh").read_text(encoding="utf-8"))
         self.assertNotIn("cargo test", self.runner)
-        self.assertIn('"$binary" --nocapture --test-threads=1', self.runner)
+        self.assertIn('VMP_REALIB_TEST_THREADS', self.runner)
+        self.assertIn('--test-threads="$test_threads"', self.runner)
         for suite in REALIB_SUITES:
             with self.subTest(suite=suite):
-                self.assertIn(f"realib_{suite}_e2e", self.workflow)
+                self.assertIn(f"realib_{suite}_e2e", self.plan)
                 self.assertIn("realib_${suite}", self.gate)
+
+    def test_e2e_shard_plan_covers_all_supported_instance_counts(self) -> None:
+        plan = (SCRIPTS / "e2e-shard-plan.sh").read_text(encoding="utf-8")
+        for instances in ("1", "2", "4"):
+            self.assertIn(f"{instances}:0)", plan)
+        self.assertIn("4:3)", plan)
+        self.assertIn("e2e_instances", self.workflow)
+        self.assertIn("fail-fast: false", self.workflow)
 
     def test_realib_gate_checks_every_suite_and_eh(self) -> None:
         for suite in REALIB_SUITES:
