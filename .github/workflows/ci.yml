@@ -308,7 +308,7 @@ jobs:
           E2E_SHARD: ${{ matrix.shard }}
           VMP_REALIB_E2E: "1"
           VMP_REALIB_ISOLATE_FIXTURES: "1"
-          VMP_REALIB_TEST_THREADS: "4"
+          VMP_REALIB_TEST_THREADS: "2"
           CC: gcc
           TEST_LOG: /tmp/test.log
         run: |
@@ -487,8 +487,9 @@ jobs:
           E2E_SHARD: ${{ matrix.shard }}
           VMP_REALIB_E2E: "1"
           VMP_REALIB_ISOLATE_FIXTURES: "1"
-          VMP_REALIB_TEST_THREADS: "4"
+          VMP_REALIB_TEST_THREADS: "2"
           CC: /data/data/com.termux/files/usr/bin/clang
+          CXX: /data/data/com.termux/files/usr/bin/clang++
           TEST_LOG: /tmp/test.log
         run: |
           set -euo pipefail
