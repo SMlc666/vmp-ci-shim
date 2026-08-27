@@ -4,14 +4,32 @@ on:
   workflow_dispatch:
     inputs:
       commit_sha:
-        description: 'Commit SHA to test'
+        description: 'Full 40-character private-repository commit SHA to test'
         required: true
         type: string
       branch:
-        description: 'Branch name (for context)'
+        description: 'Branch name for context only'
         required: false
         type: string
         default: 'main'
+      layer:
+        description: 'CI layer to run'
+        required: false
+        type: choice
+        options:
+          - all
+          - unit
+          - e2e
+        default: all
+      e2e_instances:
+        description: 'Number of independent E2E runners (1, 2, or 4)'
+        required: false
+        type: choice
+        options:
+          - '1'
+          - '2'
+          - '4'
+        default: '2'
       oracle_litmus:
         description: 'Run the Cat 2B differential-oracle litmus on bionic'
         required: false
@@ -19,353 +37,155 @@ on:
         default: false
 
 concurrency:
-  group: ${{ github.event.inputs.commit_sha }}
+  group: ci-${{ github.event.inputs.commit_sha }}-${{ github.event.inputs.layer || 'all' }}-${{ github.event.inputs.e2e_instances || '2' }}
   cancel-in-progress: true
 
 env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
+  e2e_plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - id: plan
+        env:
+          E2E_INSTANCES: ${{ inputs.e2e_instances || '2' }}
+        run: |
+          set -euo pipefail
+          case "$E2E_INSTANCES" in
+            1) matrix='{"shard":[0]}' ;;
+            2) matrix='{"shard":[0,1]}' ;;
+            4) matrix='{"shard":[0,1,2,3]}' ;;
+            *) echo "E2E_PLAN_FAILURE: unsupported e2e_instances=$E2E_INSTANCES" >&2; exit 2 ;;
+          esac
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
   public_demo:
+    if: ${{ inputs.layer == 'all' || inputs.layer == 'unit' }}
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --manifest-path examples/hello-arm64/Cargo.toml --quiet
 
-  private_glibc:
+  glibc_unit:
+    if: ${{ inputs.layer == 'all' || inputs.layer == 'unit' }}
     runs-on: ubuntu-24.04-arm
-    outputs:
-      result: ${{ steps.test.outcome }}
-      failures: ${{ steps.test.outputs.failures }}
     steps:
+      - uses: actions/checkout@v4
       - uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.DEPLOY_KEY }}
-
       - name: Trust GitHub host key
         run: ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
-
-      - name: Clone & checkout
-        run: |
-          git clone --depth 50 "$PRIVATE_REPO_URL" src
-          cd src
-          git fetch origin "${{ inputs.commit_sha }}" --depth 50
-          git checkout "${{ inputs.commit_sha }}"
+      - name: Clone and verify private source
+        id: checkout_private
         env:
           PRIVATE_REPO_URL: ${{ secrets.PRIVATE_REPO_URL }}
-
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+        run: .github/scripts/checkout-private.sh "$PRIVATE_REPO_URL" "$COMMIT_SHA" src
       - uses: dtolnay/rust-toolchain@1.95.0
-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src
-
-      - name: Restore eh_fixture cache (glibc)
-        uses: actions/cache/restore@v4
-        with:
-          path: src/tests/cpp_fixtures/eh_fixture/build
-          key: eh-fixture-glibc-${{ hashFiles('src/tests/cpp_fixtures/eh_fixture/**') }}
-
-      - id: test
-        name: Run cargo test
+      - name: Run Rust unit layer
+        id: unit
         working-directory: src
         run: |
-          cargo test --workspace --quiet -- \
+          set -euo pipefail
+          cargo build -p vmp-lifter --bins --quiet
+          cargo test --workspace --lib --bins --quiet -- \
+            --skip tests::e2e \
             --skip byte_identical \
             --skip _ndk_ \
             --skip _bytecode_ \
             --skip pattern_b_assemble \
             --skip v13_regalloc_pipeline_wiring \
             --skip proc_maps_test \
-            2>&1 | tee /tmp/test.log
-          rc=${PIPESTATUS[0]}
-          sed -i "s|/home/runner/work/[^[:space:]]*|<WORK>|g" /tmp/test.log
-          if [ $rc -ne 0 ]; then
-            grep -E '^test .* FAILED' /tmp/test.log | head -20 > /tmp/failures.txt
-            tail -50 /tmp/test.log >> /tmp/failures.txt
-            {
-              echo "failures<<EOF_FAIL"
-              cat /tmp/failures.txt
-              echo "EOF_FAIL"
-            } >> "$GITHUB_OUTPUT"
-          fi
-          exit $rc
-
-      - if: failure()
+            2>&1 | tee /tmp/unit-glibc.log
+      - name: Upload glibc unit log
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: test-log-glibc-${{ inputs.commit_sha }}
-          path: /tmp/test.log
+          name: unit-log-glibc-${{ inputs.commit_sha }}
+          path: /tmp/unit-glibc.log
           retention-days: 7
+          if-no-files-found: ignore
 
-      - name: Restore realib fixtures cache (glibc)
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            /tmp/sqlite-amalgamation-3450300
-            /tmp/openssl-1.1.1w
-            /tmp/zlib-1.3.1
-            /tmp/yaml-cpp-0.9.0
-            /tmp/protobuf-31.1
-          key: realib-extdeps-glibc-v5-${{ hashFiles('src/tests/realib_fixtures/**', 'src/vmp-lifter/tests/realib_*', 'src/vmp-lifter/tests/realib_common/**') }}
-
-      - name: Precompile realib e2e binaries (glibc)
-        if: always()
-        working-directory: src
-        run: |
-          export CARGO_INCREMENTAL=0
-          CC=gcc cargo test -p vmp-lifter --test realib_tinylib_e2e --no-run
-          CC=gcc cargo test -p vmp-lifter --test realib_sqlite_e2e --no-run
-          CC=gcc cargo test -p vmp-lifter --test realib_libcrypto_e2e --no-run
-          CC=gcc cargo test -p vmp-lifter --test realib_libz_e2e --no-run
-          CC=gcc cargo test -p vmp-lifter --test realib_yamlcpp_e2e --no-run
-          CC=gcc cargo test -p vmp-lifter --test realib_protobuflite_e2e --no-run
-          CC=gcc cargo test -p vmp-lifter --test realib_cpp_business_e2e --no-run
-          CC=gcc cargo test -p vmp-lifter --test realib_matrix_e2e --no-run
-
-      - name: Real-lib suite e2e (all suites, glibc)
-        if: always()
-        run: |
-          export VMP_REALIB_E2E=1
-          SQLITE_SRC_DIR=/tmp/sqlite-amalgamation-3450300
-          if [[ ! -f "${SQLITE_SRC_DIR}/sqlite3.c" ]]; then
-            curl -L https://sqlite.org/2024/sqlite-amalgamation-3450300.zip -o /tmp/sqlite.zip
-            unzip /tmp/sqlite.zip -d /tmp
-          fi
-          export SQLITE_SRC_DIR
-          OPENSSL_DIR=/tmp/openssl-1.1.1w
-          if [[ ! -f "${OPENSSL_DIR}/libcrypto.so.1.1" ]]; then
-            curl -L https://www.openssl.org/source/openssl-1.1.1w.tar.gz | tar xz -C /tmp
-            (cd "${OPENSSL_DIR}" && ./config shared --prefix=/tmp/openssl-install \
-              && make -j$(nproc) && make install_sw)
-            cp /tmp/openssl-install/lib/libcrypto.so* "${OPENSSL_DIR}/"
-          fi
-          export OPENSSL_DIR
-          ZLIB_SRC_DIR=/tmp/zlib-1.3.1
-          if [[ ! -f "${ZLIB_SRC_DIR}/zlib.h" ]]; then
-            rm -rf "${ZLIB_SRC_DIR}"
-            mkdir -p "${ZLIB_SRC_DIR}"
-            download_zlib_tarball() {
-              local out="$1"
-              local urls=(
-                "https://zlib.net/zlib-1.3.1.tar.gz"
-                "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz"
-              )
-              rm -f "$out"
-              for url in "${urls[@]}"; do
-                echo "Fetching zlib from ${url}"
-                if curl -fL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 120 "$url" -o "$out" \
-                  && tar tzf "$out" >/dev/null; then
-                  return 0
-                fi
-                rm -f "$out"
-              done
-              echo "FATAL: unable to fetch a valid zlib-1.3.1 tarball" >&2
-              return 1
-            }
-            download_zlib_tarball /tmp/zlib-1.3.1.tar.gz
-            tar xzf /tmp/zlib-1.3.1.tar.gz -C "${ZLIB_SRC_DIR}" --strip-components=1
-          fi
-          export ZLIB_SRC_DIR
-          YAMLCPP_SRC_DIR=/tmp/yaml-cpp-0.9.0
-          if [[ ! -f "${YAMLCPP_SRC_DIR}/include/yaml-cpp/yaml.h" ]]; then
-            rm -rf "${YAMLCPP_SRC_DIR}"
-            mkdir -p "${YAMLCPP_SRC_DIR}"
-            curl -L https://github.com/jbeder/yaml-cpp/archive/refs/tags/yaml-cpp-0.9.0.tar.gz -o /tmp/yamlcpp.tar.gz
-            tar xzf /tmp/yamlcpp.tar.gz -C "${YAMLCPP_SRC_DIR}" --strip-components=1
-          fi
-          export YAMLCPP_SRC_DIR
-          PROTOBUF_SRC_DIR=/tmp/protobuf-31.1
-          if [[ ! -f "${PROTOBUF_SRC_DIR}/src/google/protobuf/message_lite.h" ]]; then
-            rm -rf "${PROTOBUF_SRC_DIR}"
-            mkdir -p "${PROTOBUF_SRC_DIR}"
-            curl -L https://github.com/protocolbuffers/protobuf/archive/refs/tags/v31.1.tar.gz -o /tmp/protobuf-v31.1.tar.gz
-            tar xzf /tmp/protobuf-v31.1.tar.gz -C "${PROTOBUF_SRC_DIR}" --strip-components=1
-          fi
-          export PROTOBUF_SRC_DIR
-          export CC=gcc
-          export CARGO_INCREMENTAL=0
-          cd src
-          run_realib_suite() {
-            local suite="$1"
-            set +e
-            cargo test -p vmp-lifter --test "realib_${suite}_e2e" -- --nocapture 2>&1 | tee -a /tmp/test.log
-            local status=${PIPESTATUS[0]}
-            set -e
-            echo "[realib_${suite}] cargo_status = ${status}" | tee -a /tmp/test.log
-          }
-          run_realib_suite tinylib
-          run_realib_suite sqlite
-          run_realib_suite libcrypto
-          run_realib_suite libz
-          run_realib_suite yamlcpp
-          run_realib_suite protobuflite
-          run_realib_suite cpp_business
-          run_realib_suite matrix
-
-      - name: Check glibc realib gate
-        if: always()
-        run: |
-          # Default to 0.0 when a suite emitted no ratio line (binary crashed
-          # before gate emit), which fails the gate instead of silently passing.
-          suites=(tinylib sqlite libcrypto libz yamlcpp protobuflite cpp_business matrix)
-          gate_fail=0
-          for suite in "${suites[@]}"; do
-            ratio=$(grep -oP "\\[realib_${suite}\\] surviving_pass_ratio = \\K[0-9]+\\.[0-9]+" /tmp/test.log | tail -1)
-            ratio="${ratio:-0.0}"
-            cargo_status=$(grep -oP "\\[realib_${suite}\\] cargo_status = \\K[0-9]+" /tmp/test.log | tail -1)
-            cargo_status="${cargo_status:-999}"
-            label=$(printf "%s" "$suite" | tr '[:lower:]' '[:upper:]')
-            printf "%-14s surviving_pass_ratio = %s cargo_status = %s\n" "$suite" "$ratio" "$cargo_status"
-            if [ "$cargo_status" -ne 0 ]; then
-              echo "${label} REALIB CARGO TEST FAIL: status=$cargo_status"
-              gate_fail=1
-            fi
-            if awk "BEGIN {exit !($ratio >= 1.0)}"; then
-              echo "${label} GATE PASS"
-            else
-              echo "${label} GATE FAIL: ratio=$ratio < 1.0"
-              gate_fail=1
-            fi
-          done
-          if [ "$gate_fail" -ne 0 ]; then exit 1; fi
-
-      - name: Save realib fixtures cache (glibc)
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            /tmp/sqlite-amalgamation-3450300
-            /tmp/openssl-1.1.1w
-            /tmp/zlib-1.3.1
-            /tmp/yaml-cpp-0.9.0
-            /tmp/protobuf-31.1
-          key: realib-extdeps-glibc-v5-${{ hashFiles('src/tests/realib_fixtures/**', 'src/vmp-lifter/tests/realib_*', 'src/vmp-lifter/tests/realib_common/**') }}
-
-      - name: Save eh_fixture cache (glibc)
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: src/tests/cpp_fixtures/eh_fixture/build
-          key: eh-fixture-glibc-${{ hashFiles('src/tests/cpp_fixtures/eh_fixture/**') }}
-
-  # Bionic job: native execution of termux's bionic userland on the ARM64
-  # Linux host. No Docker, no chroot — extract a pre-baked termux+rust
-  # image to /data/data/com.termux + /system and invoke binaries directly.
-  # Linux kernel doesn't care which libc a process uses; only the linker
-  # path needs to exist (/system/bin/linker64 from the image).
-  private_bionic:
+  bionic_unit:
+    if: ${{ inputs.layer == 'all' || inputs.layer == 'unit' }}
     runs-on: ubuntu-24.04-arm
-    outputs:
-      result: ${{ steps.test.outcome }}
-      failures: ${{ steps.test.outputs.failures }}
     env:
       TERMUX_PREFIX: /data/data/com.termux/files/usr
+      PREFIX: /data/data/com.termux/files/usr
       TERMUX_HOME: /data/data/com.termux/files/home
-      # Pre-baked image with rust + git pre-installed. Bump the tag when
-      # the Dockerfile changes (and rebuild via build-bionic-image.yml).
       BIONIC_IMAGE: ghcr.io/smlc666/termux-rust:v5
       BIONIC_CACHE_VERSION: v8-image-v5
     steps:
       - uses: actions/checkout@v4
-
       - uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.DEPLOY_KEY }}
-
       - name: Trust GitHub host key
         run: ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
-
-      - name: Clone & checkout
-        run: |
-          git clone --depth 50 "$PRIVATE_REPO_URL" src
-          cd src
-          git fetch origin "${{ inputs.commit_sha }}" --depth 50
-          git checkout "${{ inputs.commit_sha }}"
+      - name: Clone and verify private source
+        id: checkout_private
         env:
           PRIVATE_REPO_URL: ${{ secrets.PRIVATE_REPO_URL }}
-
-      - name: Install + start HTTP proxy (tinyproxy)
-        # tinyproxy bridges bionic's broken DNS by accepting CONNECT on 127.0.0.1
-        # and resolving upstream hostnames via host's glibc. Must run BEFORE
-        # any termux apt/cargo network activity, regardless of cache hit/miss.
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+        run: .github/scripts/checkout-private.sh "$PRIVATE_REPO_URL" "$COMMIT_SHA" src
+      - name: Install and verify HTTP proxy
         run: |
+          set -euo pipefail
           sudo apt-get install -y tinyproxy >/dev/null
           sudo bash -c 'printf "%s\n" "User tinyproxy" "Group tinyproxy" "Port 3128" "Listen 127.0.0.1" "Timeout 600" "LogLevel Warning" "PidFile \"/run/tinyproxy/tinyproxy.pid\"" "MaxClients 100" "Allow 127.0.0.1" "ConnectPort 443" "ConnectPort 80" "DisableViaHeader Yes" > /etc/tinyproxy/tinyproxy.conf'
           sudo systemctl restart tinyproxy
           sudo systemctl is-active tinyproxy
-          curl -sI --max-time 10 -x http://127.0.0.1:3128 https://github.com | head -2
-
-      - name: Restore bionic userland cache (extracted from pre-baked image)
-        id: bionic-cache
+          curl -fsSI --max-time 15 -x http://127.0.0.1:3128 https://github.com >/dev/null
+      - name: Restore bionic userland cache
+        id: bionic_cache
         uses: actions/cache/restore@v4
         with:
           path: /tmp/bionic-userland.tar
           key: bionic-userland-${{ env.BIONIC_CACHE_VERSION }}-${{ hashFiles('docker/Dockerfile') }}
-
       - name: Log in to ghcr.io
-        if: steps.bionic-cache.outputs.cache-hit != 'true'
+        if: steps.bionic_cache.outputs.cache-hit != 'true'
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-
-      - name: Extract bionic from pre-baked image (cache miss)
-        if: steps.bionic-cache.outputs.cache-hit != 'true'
+      - name: Extract bionic userland from image
+        if: steps.bionic_cache.outputs.cache-hit != 'true'
         run: |
-          set -e
-          echo "=== docker pull $BIONIC_IMAGE ==="
+          set -euo pipefail
           docker pull "$BIONIC_IMAGE"
-
-          echo "=== docker create + cp ==="
           docker create --name termux-extract "$BIONIC_IMAGE" sleep infinity
           sudo mkdir -p /data/data/com.termux
           sudo docker cp termux-extract:/data/data/com.termux/files /data/data/com.termux/files
           sudo docker cp termux-extract:/system /system
           docker rm termux-extract
-
           sudo chown -R "$USER:$USER" /data/data/com.termux
-
-          echo "=== sanity: bionic linker present ==="
-          ls -la /system/bin/linker64 /system/lib64
-          [ -e /system/bin/linker64 ] && echo "linker target EXISTS" || { echo "FAIL: linker missing"; exit 1; }
-
-          echo "=== sanity: rustc baked in ==="
+          test -e /system/bin/linker64
           "$TERMUX_PREFIX/bin/rustc" --version
+          "$TERMUX_PREFIX/bin/cargo" --version
           "$TERMUX_PREFIX/bin/git" --version
-
-          echo "=== snapshot tarball ==="
           sudo tar -cf /tmp/bionic-userland.tar /data/data/com.termux /system 2>/dev/null
-          ls -lh /tmp/bionic-userland.tar
-
       - name: Save bionic userland cache
-        # Explicit save BEFORE cargo test runs — actions/cache@v4's bundled
-        # post-step skips save when a later step fails, and cargo test
-        # routinely fails in bionic (continue-on-error). Saving here keeps
-        # the warm-cache path independent of test outcome.
-        if: steps.bionic-cache.outputs.cache-hit != 'true'
+        if: steps.bionic_cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: /tmp/bionic-userland.tar
           key: bionic-userland-${{ env.BIONIC_CACHE_VERSION }}-${{ hashFiles('docker/Dockerfile') }}
-
-      - name: Restore bionic userland (cache hit)
-        if: steps.bionic-cache.outputs.cache-hit == 'true'
+      - name: Restore bionic userland cache hit
+        if: steps.bionic_cache.outputs.cache-hit == 'true'
         run: |
-          set -e
-          echo "=== restoring cached bionic tarball ==="
-          ls -lh /tmp/bionic-userland.tar
+          set -euo pipefail
+          test -s /tmp/bionic-userland.tar
           sudo tar -xf /tmp/bionic-userland.tar -C /
           sudo chown -R "$USER:$USER" /data/data/com.termux
-
-          echo "=== sanity check ==="
-          "$TERMUX_PREFIX/bin/rustc" --version || { echo "FAIL: cached rust broken"; exit 1; }
-
-      - name: Restore cargo cache (bionic)
-        # Caches ~/.cargo/registry, ~/.cargo/git, and CARGO_TARGET_DIR
-        # ($HOME/target, redirected away from $HOME/src/target so cp -r doesn't
-        # collide). Exact key includes the private commit so restored target
-        # output never pins stale binaries across commits; restore-keys still
-        # gives same-lockfile incremental compile warm starts.
-        id: cargo-cache
+          "$TERMUX_PREFIX/bin/rustc" --version
+          "$TERMUX_PREFIX/bin/cargo" --version
+      - name: Restore bionic cargo cache
+        id: cargo_cache
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -376,309 +196,37 @@ jobs:
           restore-keys: |
             cargo-bionic-${{ hashFiles('src/Cargo.lock') }}-
             cargo-bionic-
-
-      - name: Restore eh_fixture cache (bionic)
-        uses: actions/cache/restore@v4
-        with:
-          path: src/tests/cpp_fixtures/eh_fixture/build
-          key: eh-fixture-bionic-${{ hashFiles('src/tests/cpp_fixtures/eh_fixture/**') }}
-
-      - name: Restore realib fixtures cache (bionic)
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            /tmp/sqlite-amalgamation-3450300
-            /tmp/openssl-1.1.1w
-            /tmp/zlib-1.3.1
-            /tmp/yaml-cpp-0.9.0
-            /tmp/protobuf-31.1
-          key: realib-extdeps-bionic-v4-${{ hashFiles('docker/Dockerfile', 'src/tests/realib_fixtures/**', 'src/vmp-lifter/tests/realib_*', 'src/vmp-lifter/tests/realib_common/**') }}
-
-      - name: Create LD-clean host compiler wrappers (bionic)
+      - name: Create LD-clean host compiler wrappers
+        run: .github/scripts/create-ld-clean-wrappers.sh
+      - name: Configure bionic toolchain
+        run: .github/scripts/configure-bionic-env.sh
+      - name: Run Rust unit layer against bionic
+        id: unit
+        working-directory: src
         run: |
           set -euo pipefail
-          wrapper_dir=/tmp/host-toolchain-cleanbin
-          rm -rf "$wrapper_dir"
-          mkdir -p "$wrapper_dir"
-          for tool in aarch64-linux-gnu-gcc aarch64-linux-gnu-g++ gcc g++ cc c++ clang clang++; do
-            if [ -x "/usr/bin/$tool" ]; then
-              cat > "$wrapper_dir/$tool" <<'EOF'
-          #!/usr/bin/env bash
-          tool="$(basename "$0")"
-          unset LD_LIBRARY_PATH
-          exec "/usr/bin/$tool" "$@"
-          EOF
-              chmod +x "$wrapper_dir/$tool"
-            fi
-          done
-          ls -la "$wrapper_dir"
-
-      - id: test
-        name: Run cargo test against bionic
-        run: |
-          export PREFIX="$TERMUX_PREFIX"
           export HOME="$TERMUX_HOME"
           export PATH="$TERMUX_PREFIX/bin:/tmp/host-toolchain-cleanbin:$PATH"
           export LD_LIBRARY_PATH="$TERMUX_PREFIX/lib"
-          # Cargo also needs to reach crates.io for dep download — same bionic-DNS
-          # blocker, same proxy fix.
           export HTTPS_PROXY=http://127.0.0.1:3128
           export HTTP_PROXY=http://127.0.0.1:3128
-          # Override project's .cargo/config.toml NDK paths (which only exist on
-          # the dev box) with termux's own clang. CARGO_TARGET_*_LINKER env var
-          # takes precedence over workspace cargo config.
           export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TERMUX_PREFIX/bin/clang"
           export CARGO_TARGET_AARCH64_LINUX_ANDROID_AR="$TERMUX_PREFIX/bin/llvm-ar"
-          # Redirect target/ outside src/ — keeps cp -r non-colliding with
-          # cache-restored target, and lets CARGO_TARGET_DIR alone control
-          # cache contents.
           export CARGO_TARGET_DIR="$TERMUX_HOME/target"
-
-          # vmp-lifter's e2e tests resolve vmp-runner via env!("CARGO_MANIFEST_DIR")/../target/<profile>/vmp-runner
-          # — a compile-time-baked relative path. With CARGO_TARGET_DIR pointing
-          # outside src/, that lookup misses unless src/target is symlinked to
-          # the real target dir. mkdir+ln-sfn covers both first run (target/
-          # doesn't exist yet) and cache-restored target.
           mkdir -p "$TERMUX_HOME/target"
-          ln -sfn "$TERMUX_HOME/target" src/target
-          cd src
-
-          # Cat 2B phase-bisect (2026-05-25): VMP_PHASE_SHA=1 prints SHA-256
-          # of in-memory state after each pipeline phase. Diff against
-          # glibc-host SHAs to locate which phase introduces host
-          # non-determinism. Remove this env var once Cat 2B is resolved.
-          export VMP_PHASE_SHA=1
-          "$TERMUX_PREFIX/bin/cargo" test --workspace --quiet -- \
+          ln -sfn "$TERMUX_HOME/target" "$GITHUB_WORKSPACE/src/target"
+          cargo build -p vmp-lifter --bins --quiet
+          cargo test --workspace --lib --bins --quiet -- \
+            --skip tests::e2e \
             --skip byte_identical \
             --skip _ndk_ \
             --skip _bytecode_ \
             --skip pattern_b_assemble \
             --skip v13_regalloc_pipeline_wiring \
             --skip proc_maps_test \
-            2>&1 | tee /tmp/test.log
-          rc=${PIPESTATUS[0]}
-
-          sed -i "s|/data/data/com.termux/[^[:space:]]*|<WORK>|g" /tmp/test.log
-          if [ $rc -ne 0 ]; then
-            grep -E '^test .* FAILED' /tmp/test.log | head -20 > /tmp/failures.txt
-            tail -50 /tmp/test.log >> /tmp/failures.txt
-            {
-              echo "failures<<EOF_FAIL"
-              cat /tmp/failures.txt
-              echo "EOF_FAIL"
-            } >> "$GITHUB_OUTPUT"
-          fi
-          exit $rc
-
-      - name: Precompile realib e2e binaries (bionic)
-        if: always()
-        run: |
-          export PREFIX="$TERMUX_PREFIX"
-          export HOME="$TERMUX_HOME"
-          export PATH="$TERMUX_PREFIX/bin:/tmp/host-toolchain-cleanbin:$PATH"
-          export HTTPS_PROXY=http://127.0.0.1:3128
-          export HTTP_PROXY=http://127.0.0.1:3128
-          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TERMUX_PREFIX/bin/clang"
-          export CARGO_TARGET_AARCH64_LINUX_ANDROID_AR="$TERMUX_PREFIX/bin/llvm-ar"
-          export CARGO_TARGET_DIR="$TERMUX_HOME/target"
-          export CARGO_INCREMENTAL=0
-          export CC="$TERMUX_PREFIX/bin/clang"
-          cd src
-          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_tinylib_e2e --no-run
-          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_sqlite_e2e --no-run
-          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_libcrypto_e2e --no-run
-          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_libz_e2e --no-run
-          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_yamlcpp_e2e --no-run
-          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_protobuflite_e2e --no-run
-          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_cpp_business_e2e --no-run
-          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test realib_matrix_e2e --no-run
-
-      - name: Real-lib suite e2e (all suites, bionic)
-        # The main --workspace run bails fast on the lib binary's known Cat 2B
-        # failures, so the integration binary never runs there. Run it
-        # standalone (precompiled above). if: always() because the main
-        # test step exits non-zero.
-        if: always()
-        run: |
-          export PREFIX="$TERMUX_PREFIX"
-          export HOME="$TERMUX_HOME"
-          export PATH="$TERMUX_PREFIX/bin:/tmp/host-toolchain-cleanbin:$PATH"
-          export LD_LIBRARY_PATH="$TERMUX_PREFIX/lib"
-          export HTTPS_PROXY=http://127.0.0.1:3128
-          export HTTP_PROXY=http://127.0.0.1:3128
-          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TERMUX_PREFIX/bin/clang"
-          export CARGO_TARGET_AARCH64_LINUX_ANDROID_AR="$TERMUX_PREFIX/bin/llvm-ar"
-          export CARGO_TARGET_DIR="$TERMUX_HOME/target"
-          export VMP_REALIB_E2E=1
-          export CARGO_INCREMENTAL=0
-
-          SQLITE_SRC_DIR=/tmp/sqlite-amalgamation-3450300
-          if [[ ! -f "${SQLITE_SRC_DIR}/sqlite3.c" ]]; then
-            # Cache miss — fall back to the image-baked copy if available,
-            # otherwise download fresh (sqlite is pure C source, no
-            # platform-specific build needed).
-            BAKED="$TERMUX_PREFIX/realib-sqlite/sqlite-amalgamation-3450300"
-            if [[ -f "${BAKED}/sqlite3.c" ]]; then
-              cp -a "$BAKED" /tmp/sqlite-amalgamation-3450300
-            else
-              curl -L https://sqlite.org/2024/sqlite-amalgamation-3450300.zip -o /tmp/sqlite.zip
-              unzip /tmp/sqlite.zip -d /tmp
-            fi
-          fi
-          export SQLITE_SRC_DIR
-
-          OPENSSL_DIR=/tmp/openssl-1.1.1w
-          if [[ ! -f "${OPENSSL_DIR}/libcrypto.so.1.1" ]]; then
-            # Cache miss — use the image-baked bionic-compiled copy.
-            # Do NOT run ./config + make here: openssl's config script has
-            # bionic-specific quirks; the image ships a pre-verified build.
-            # NOTE: Dockerfile lays it out at realib-openssl/openssl-1.1.1w/
-            # (subdirectory), not directly under realib-openssl/.
-            BAKED="$TERMUX_PREFIX/realib-openssl/openssl-1.1.1w"
-            if [[ -f "${BAKED}/libcrypto.so.1.1" ]]; then
-              cp -a "$BAKED" /tmp/openssl-1.1.1w
-            else
-              echo "FATAL: no cached or baked openssl for bionic" >&2
-              exit 1
-            fi
-          fi
-          export OPENSSL_DIR
-
-          ZLIB_SRC_DIR=/tmp/zlib-1.3.1
-          if [[ ! -f "${ZLIB_SRC_DIR}/zlib.h" ]]; then
-            rm -rf "${ZLIB_SRC_DIR}"
-            mkdir -p "${ZLIB_SRC_DIR}"
-            download_zlib_tarball() {
-              local out="$1"
-              local urls=(
-                "https://zlib.net/zlib-1.3.1.tar.gz"
-                "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz"
-              )
-              rm -f "$out"
-              for url in "${urls[@]}"; do
-                echo "Fetching zlib from ${url}"
-                if curl -fL --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 120 "$url" -o "$out" \
-                  && tar tzf "$out" >/dev/null; then
-                  return 0
-                fi
-                rm -f "$out"
-              done
-              echo "FATAL: unable to fetch a valid zlib-1.3.1 tarball" >&2
-              return 1
-            }
-            download_zlib_tarball /tmp/zlib-1.3.1.tar.gz
-            tar xzf /tmp/zlib-1.3.1.tar.gz -C "${ZLIB_SRC_DIR}" --strip-components=1
-          fi
-          export ZLIB_SRC_DIR
-
-          YAMLCPP_SRC_DIR=/tmp/yaml-cpp-0.9.0
-          if [[ ! -f "${YAMLCPP_SRC_DIR}/include/yaml-cpp/yaml.h" ]]; then
-            rm -rf "${YAMLCPP_SRC_DIR}"
-            mkdir -p "${YAMLCPP_SRC_DIR}"
-            curl -L https://github.com/jbeder/yaml-cpp/archive/refs/tags/yaml-cpp-0.9.0.tar.gz -o /tmp/yamlcpp.tar.gz
-            tar xzf /tmp/yamlcpp.tar.gz -C "${YAMLCPP_SRC_DIR}" --strip-components=1
-          fi
-          export YAMLCPP_SRC_DIR
-
-          PROTOBUF_SRC_DIR=/tmp/protobuf-31.1
-          if [[ ! -f "${PROTOBUF_SRC_DIR}/src/google/protobuf/message_lite.h" ]]; then
-            rm -rf "${PROTOBUF_SRC_DIR}"
-            mkdir -p "${PROTOBUF_SRC_DIR}"
-            curl -L https://github.com/protocolbuffers/protobuf/archive/refs/tags/v31.1.tar.gz -o /tmp/protobuf-v31.1.tar.gz
-            tar xzf /tmp/protobuf-v31.1.tar.gz -C "${PROTOBUF_SRC_DIR}" --strip-components=1
-          fi
-          export PROTOBUF_SRC_DIR
-
-          export CC="$TERMUX_PREFIX/bin/clang"
-          cd src
-          # Each adapter is an independent indicator; record each cargo status
-          # so the later gate can fail without aborting before the next suite.
-          run_realib_suite() {
-            local suite="$1"
-            set +e
-            "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test "realib_${suite}_e2e" -- --nocapture 2>&1 | tee -a /tmp/test.log
-            local status=${PIPESTATUS[0]}
-            set -e
-            echo "[realib_${suite}] cargo_status = ${status}" | tee -a /tmp/test.log
-          }
-          run_realib_suite tinylib
-          run_realib_suite sqlite
-          run_realib_suite libcrypto
-          run_realib_suite libz
-          run_realib_suite yamlcpp
-          run_realib_suite protobuflite
-          run_realib_suite cpp_business
-          run_realib_suite matrix
-
-      - name: Check bionic realib gate
-        if: always()
-        run: |
-          # Default to 0.0 when a suite emitted no ratio line (binary crashed
-          # before gate emit), which fails the gate instead of silently passing.
-          suites=(tinylib sqlite libcrypto libz yamlcpp protobuflite cpp_business matrix)
-          gate_fail=0
-          for suite in "${suites[@]}"; do
-            ratio=$(grep -oP "\\[realib_${suite}\\] surviving_pass_ratio = \\K[0-9]+\\.[0-9]+" /tmp/test.log | tail -1)
-            ratio="${ratio:-0.0}"
-            cargo_status=$(grep -oP "\\[realib_${suite}\\] cargo_status = \\K[0-9]+" /tmp/test.log | tail -1)
-            cargo_status="${cargo_status:-999}"
-            label=$(printf "%s" "$suite" | tr '[:lower:]' '[:upper:]')
-            printf "%-14s surviving_pass_ratio = %s cargo_status = %s\n" "$suite" "$ratio" "$cargo_status"
-            if [ "$cargo_status" -ne 0 ]; then
-              echo "${label} REALIB CARGO TEST FAIL: status=$cargo_status"
-              gate_fail=1
-            fi
-            if awk "BEGIN {exit !($ratio >= 1.0)}"; then
-              echo "${label} GATE PASS"
-            else
-              echo "${label} GATE FAIL: ratio=$ratio < 1.0"
-              gate_fail=1
-            fi
-          done
-          if [ "$gate_fail" -ne 0 ]; then exit 1; fi
-
-      - name: Save realib fixtures cache (bionic)
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            /tmp/sqlite-amalgamation-3450300
-            /tmp/openssl-1.1.1w
-            /tmp/zlib-1.3.1
-            /tmp/yaml-cpp-0.9.0
-            /tmp/protobuf-31.1
-          key: realib-extdeps-bionic-v4-${{ hashFiles('docker/Dockerfile', 'src/tests/realib_fixtures/**', 'src/vmp-lifter/tests/realib_*', 'src/vmp-lifter/tests/realib_common/**') }}
-
-      - name: Oracle Cat 2B litmus (bionic)
-        # Proof the three-way differential oracle auto-classifies mba_smoke as
-        # NATIVE-EXEC (bytecode correct, native VM crashes) on bionic — the
-        # diagnosis that took multiple sessions by hand, now one automated run.
-        # Gated on the oracle_litmus dispatch input so normal/hook-triggered
-        # runs skip it (the test self-skips when VMP_ORACLE_LITMUS != 1). NOT
-        # continue-on-error: this step passing IS the proof the oracle works.
-        if: ${{ always() && inputs.oracle_litmus }}
-        run: |
-          export PREFIX="$TERMUX_PREFIX"
-          export HOME="$TERMUX_HOME"
-          export PATH="$TERMUX_PREFIX/bin:/tmp/host-toolchain-cleanbin:$PATH"
-          export LD_LIBRARY_PATH="$TERMUX_PREFIX/lib"
-          export HTTPS_PROXY=http://127.0.0.1:3128
-          export HTTP_PROXY=http://127.0.0.1:3128
-          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TERMUX_PREFIX/bin/clang"
-          export CARGO_TARGET_AARCH64_LINUX_ANDROID_AR="$TERMUX_PREFIX/bin/llvm-ar"
-          export CARGO_TARGET_DIR="$TERMUX_HOME/target"
-          # Gate ON + compile mba_smoke.c with bionic clang (matches the
-          # confirmed local repro recipe).
-          export VMP_ORACLE_LITMUS=1
-          export CC="$TERMUX_PREFIX/bin/clang"
-          cd src
-          "$TERMUX_PREFIX/bin/cargo" test -p vmp-lifter --test oracle_litmus -- --nocapture
-
-      - name: Save cargo cache (bionic)
-        # if: always() — save even when cargo test fails (87 e2e are known
-        # noise; we still want the compile artifacts cached). Skip when
-        # exact-key cache-hit (no new content to save).
-        if: always() && steps.cargo-cache.outputs.cache-hit != 'true'
+            2>&1 | tee /tmp/unit-bionic.log
+      - name: Save bionic cargo cache
+        if: ${{ always() && steps.cargo_cache.outcome == 'success' && steps.cargo_cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
           path: |
@@ -686,92 +234,402 @@ jobs:
             /data/data/com.termux/files/home/.cargo/git
             /data/data/com.termux/files/home/target
           key: cargo-bionic-${{ hashFiles('src/Cargo.lock') }}-${{ inputs.commit_sha }}
+      - name: Upload bionic unit log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-log-bionic-${{ inputs.commit_sha }}
+          path: /tmp/unit-bionic.log
+          retention-days: 7
+          if-no-files-found: ignore
 
-      - name: Save eh_fixture cache (bionic)
-        if: always()
+  glibc_e2e:
+    if: ${{ inputs.layer == 'all' || inputs.layer == 'e2e' }}
+    needs: e2e_plan
+    name: glibc_e2e (shard ${{ matrix.shard }}/${{ inputs.e2e_instances || '2' }})
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.e2e_plan.outputs.matrix) }}
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_KEY }}
+      - name: Trust GitHub host key
+        run: ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
+      - name: Clone and verify private source
+        id: checkout_private
+        env:
+          PRIVATE_REPO_URL: ${{ secrets.PRIVATE_REPO_URL }}
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+        run: .github/scripts/checkout-private.sh "$PRIVATE_REPO_URL" "$COMMIT_SHA" src
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src
+          shared-key: glibc-e2e
+      - name: Restore glibc realib dependency cache
+        id: realib_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            /tmp/sqlite-amalgamation-3450300
+            /tmp/openssl-1.1.1w
+            /tmp/zlib-1.3.1
+            /tmp/yaml-cpp-0.9.0
+            /tmp/protobuf-31.1
+            /tmp/zlib-system
+          key: realib-extdeps-glibc-layered-v1-${{ hashFiles('src/tests/realib_fixtures/**', 'src/vmp-lifter/tests/realib_*', 'src/vmp-lifter/tests/realib_common/**') }}
+      - name: Restore glibc EH fixture cache
+        id: eh_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: src/tests/cpp_fixtures/eh_fixture/build
+          key: eh-fixture-glibc-${{ hashFiles('src/tests/cpp_fixtures/eh_fixture/**') }}
+      - name: Prepare glibc Python scanner
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/vmp-python"
+          "$RUNNER_TEMP/vmp-python/bin/pip" install --disable-pip-version-check --no-input pyelftools
+      - name: Prepare glibc realib dependencies
+        env:
+          REALIB_LIBC: glibc
+        run: .github/scripts/prepare-realib-deps.sh
+      - name: Build E2E targets once
+        working-directory: src
+        env:
+          E2E_INSTANCES: ${{ inputs.e2e_instances || '2' }}
+          E2E_SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          source "$GITHUB_WORKSPACE/.github/scripts/e2e-shard-plan.sh"
+          e2e_shard_plan "$E2E_INSTANCES" "$E2E_SHARD"
+          printf 'E2E shard %s/%s targets: %s\n' "$E2E_SHARD" "$E2E_INSTANCES" "${E2E_TARGETS[*]}"
+          "$GITHUB_WORKSPACE/.github/scripts/build-e2e-targets.sh" "${E2E_TARGETS[@]}"
+      - name: Run glibc EH and realib e2e layer
+        working-directory: src
+        env:
+          E2E_INSTANCES: ${{ inputs.e2e_instances || '2' }}
+          E2E_SHARD: ${{ matrix.shard }}
+          VMP_REALIB_E2E: "1"
+          VMP_REALIB_ISOLATE_FIXTURES: "1"
+          VMP_REALIB_BASELINE_CACHE: /tmp/vmp-realib-baselines-${{ inputs.commit_sha }}
+          VMP_REALIB_PYTHON: ${{ runner.temp }}/vmp-python/bin/python
+          OBJCOPY: objcopy
+          VMP_REALIB_SERIAL_TARGETS: "realib_matrix_e2e"
+          VMP_REALIB_TEST_THREADS: "2"
+          VMP_REALIB_PROGRESS: "1"
+          CC: gcc
+          TEST_LOG: /tmp/test.log
+        run: |
+          set -euo pipefail
+          source "$GITHUB_WORKSPACE/.github/scripts/e2e-shard-plan.sh"
+          e2e_shard_plan "$E2E_INSTANCES" "$E2E_SHARD"
+          "$GITHUB_WORKSPACE/.github/scripts/run-e2e-targets.sh" "${E2E_RUNS[@]}"
+      - name: Check glibc e2e gate
+        env:
+          E2E_INSTANCES: ${{ inputs.e2e_instances || '2' }}
+          E2E_SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          source "$GITHUB_WORKSPACE/.github/scripts/e2e-shard-plan.sh"
+          e2e_shard_plan "$E2E_INSTANCES" "$E2E_SHARD"
+          "$GITHUB_WORKSPACE/.github/scripts/realib-gate.sh" /tmp/test.log "${E2E_SUITES[@]}"
+      - name: Save glibc realib dependency cache
+        if: ${{ always() && matrix.shard == 0 && steps.realib_cache.outcome == 'success' && steps.realib_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            /tmp/sqlite-amalgamation-3450300
+            /tmp/openssl-1.1.1w
+            /tmp/zlib-1.3.1
+            /tmp/yaml-cpp-0.9.0
+            /tmp/protobuf-31.1
+            /tmp/zlib-system
+          key: realib-extdeps-glibc-layered-v1-${{ hashFiles('src/tests/realib_fixtures/**', 'src/vmp-lifter/tests/realib_*', 'src/vmp-lifter/tests/realib_common/**') }}
+      - name: Save glibc EH fixture cache
+        if: ${{ always() && matrix.shard == 0 && steps.eh_cache.outcome == 'success' && steps.eh_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: src/tests/cpp_fixtures/eh_fixture/build
+          key: eh-fixture-glibc-${{ hashFiles('src/tests/cpp_fixtures/eh_fixture/**') }}
+      - name: Upload glibc e2e log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-log-glibc-${{ inputs.commit_sha }}-${{ matrix.shard }}
+          path: /tmp/test.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+  bionic_e2e:
+    if: ${{ inputs.layer == 'all' || inputs.layer == 'e2e' }}
+    needs: e2e_plan
+    name: bionic_e2e (shard ${{ matrix.shard }}/${{ inputs.e2e_instances || '2' }})
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.e2e_plan.outputs.matrix) }}
+    runs-on: ubuntu-24.04-arm
+    env:
+      TERMUX_PREFIX: /data/data/com.termux/files/usr
+      PREFIX: /data/data/com.termux/files/usr
+      TERMUX_HOME: /data/data/com.termux/files/home
+      BIONIC_IMAGE: ghcr.io/smlc666/termux-rust:v5
+      BIONIC_CACHE_VERSION: v8-image-v5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_KEY }}
+      - name: Trust GitHub host key
+        run: ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
+      - name: Clone and verify private source
+        id: checkout_private
+        env:
+          PRIVATE_REPO_URL: ${{ secrets.PRIVATE_REPO_URL }}
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+        run: .github/scripts/checkout-private.sh "$PRIVATE_REPO_URL" "$COMMIT_SHA" src
+      - name: Install and verify HTTP proxy
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y tinyproxy >/dev/null
+          sudo bash -c 'printf "%s\n" "User tinyproxy" "Group tinyproxy" "Port 3128" "Listen 127.0.0.1" "Timeout 600" "LogLevel Warning" "PidFile \"/run/tinyproxy/tinyproxy.pid\"" "MaxClients 100" "Allow 127.0.0.1" "ConnectPort 443" "ConnectPort 80" "DisableViaHeader Yes" > /etc/tinyproxy/tinyproxy.conf'
+          sudo systemctl restart tinyproxy
+          sudo systemctl is-active tinyproxy
+          curl -fsSI --max-time 15 -x http://127.0.0.1:3128 https://github.com >/dev/null
+      - name: Restore bionic userland cache
+        id: bionic_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: /tmp/bionic-userland.tar
+          key: bionic-userland-${{ env.BIONIC_CACHE_VERSION }}-${{ hashFiles('docker/Dockerfile') }}
+      - name: Log in to ghcr.io
+        if: steps.bionic_cache.outputs.cache-hit != 'true'
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Extract bionic userland from image
+        if: steps.bionic_cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          docker pull "$BIONIC_IMAGE"
+          docker create --name termux-extract "$BIONIC_IMAGE" sleep infinity
+          sudo mkdir -p /data/data/com.termux
+          sudo docker cp termux-extract:/data/data/com.termux/files /data/data/com.termux/files
+          sudo docker cp termux-extract:/system /system
+          docker rm termux-extract
+          sudo chown -R "$USER:$USER" /data/data/com.termux
+          test -e /system/bin/linker64
+          "$TERMUX_PREFIX/bin/rustc" --version
+          "$TERMUX_PREFIX/bin/cargo" --version
+          "$TERMUX_PREFIX/bin/git" --version
+          sudo tar -cf /tmp/bionic-userland.tar /data/data/com.termux /system 2>/dev/null
+      - name: Save bionic userland cache
+        if: ${{ matrix.shard == 0 && steps.bionic_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/bionic-userland.tar
+          key: bionic-userland-${{ env.BIONIC_CACHE_VERSION }}-${{ hashFiles('docker/Dockerfile') }}
+      - name: Restore bionic userland cache hit
+        if: steps.bionic_cache.outputs.cache-hit == 'true'
+        run: |
+          set -euo pipefail
+          test -s /tmp/bionic-userland.tar
+          sudo tar -xf /tmp/bionic-userland.tar -C /
+          sudo chown -R "$USER:$USER" /data/data/com.termux
+          "$TERMUX_PREFIX/bin/rustc" --version
+          "$TERMUX_PREFIX/bin/cargo" --version
+      - name: Restore bionic cargo cache
+        id: cargo_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            /data/data/com.termux/files/home/.cargo/registry
+            /data/data/com.termux/files/home/.cargo/git
+            /data/data/com.termux/files/home/target
+          key: cargo-bionic-${{ hashFiles('src/Cargo.lock') }}-${{ inputs.commit_sha }}-e2e-${{ matrix.shard }}
+          restore-keys: |
+            cargo-bionic-${{ hashFiles('src/Cargo.lock') }}-${{ inputs.commit_sha }}-e2e-
+            cargo-bionic-${{ hashFiles('src/Cargo.lock') }}-
+            cargo-bionic-
+      - name: Restore bionic realib dependency cache
+        id: realib_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            /tmp/sqlite-amalgamation-3450300
+            /tmp/openssl-1.1.1w
+            /tmp/zlib-1.3.1
+            /tmp/yaml-cpp-0.9.0
+            /tmp/protobuf-31.1
+          key: realib-extdeps-bionic-layered-v1-${{ hashFiles('docker/Dockerfile', 'src/tests/realib_fixtures/**', 'src/vmp-lifter/tests/realib_*', 'src/vmp-lifter/tests/realib_common/**') }}
+      - name: Restore bionic EH fixture cache
+        id: eh_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: src/tests/cpp_fixtures/eh_fixture/build
+          key: eh-fixture-bionic-${{ hashFiles('src/tests/cpp_fixtures/eh_fixture/**') }}
+      - name: Create LD-clean host compiler wrappers
+        run: .github/scripts/create-ld-clean-wrappers.sh
+      - name: Configure bionic toolchain
+        run: .github/scripts/configure-bionic-env.sh
+      - name: Prepare bionic Python scanner
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/vmp-python"
+          "$RUNNER_TEMP/vmp-python/bin/pip" install --disable-pip-version-check --no-input pyelftools
+      - name: Prepare bionic realib dependencies
+        env:
+          REALIB_LIBC: bionic
+        run: .github/scripts/prepare-realib-deps.sh
+      - name: Build E2E targets once
+        working-directory: src
+        env:
+          E2E_INSTANCES: ${{ inputs.e2e_instances || '2' }}
+          E2E_SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          source "$GITHUB_WORKSPACE/.github/scripts/e2e-shard-plan.sh"
+          e2e_shard_plan "$E2E_INSTANCES" "$E2E_SHARD"
+          printf 'E2E shard %s/%s targets: %s\n' "$E2E_SHARD" "$E2E_INSTANCES" "${E2E_TARGETS[*]}"
+          env -u LD_LIBRARY_PATH \
+            BIONIC_MODE=1 \
+            BIONIC_PREFIX="$TERMUX_PREFIX" \
+            BIONIC_HOME="$TERMUX_HOME" \
+            CARGO_TARGET_DIR="$TERMUX_HOME/target" \
+            "$GITHUB_WORKSPACE/.github/scripts/build-e2e-targets.sh" "${E2E_TARGETS[@]}"
+      - name: Run bionic EH and realib e2e layer
+        working-directory: src
+        env:
+          E2E_INSTANCES: ${{ inputs.e2e_instances || '2' }}
+          E2E_SHARD: ${{ matrix.shard }}
+          VMP_REALIB_E2E: "1"
+          VMP_REALIB_ISOLATE_FIXTURES: "1"
+          VMP_REALIB_BASELINE_CACHE: /data/data/com.termux/files/usr/tmp/vmp-realib-baselines-${{ inputs.commit_sha }}
+          VMP_REALIB_PYTHON: ${{ runner.temp }}/vmp-python/bin/python
+          OBJCOPY: objcopy
+          VMP_REALIB_SERIAL_TARGETS: "realib_matrix_e2e"
+          VMP_REALIB_TEST_THREADS: "2"
+          VMP_REALIB_PROGRESS: "1"
+          CC: /data/data/com.termux/files/usr/bin/clang
+          CXX: /data/data/com.termux/files/usr/bin/clang++
+          VMP_REALIB_LLVM_STRIP: /data/data/com.termux/files/usr/bin/llvm-strip
+          TEST_LOG: /tmp/test.log
+        run: |
+          set -euo pipefail
+          source "$GITHUB_WORKSPACE/.github/scripts/e2e-shard-plan.sh"
+          e2e_shard_plan "$E2E_INSTANCES" "$E2E_SHARD"
+          env -u LD_LIBRARY_PATH \
+            BIONIC_MODE=1 \
+            BIONIC_PREFIX="$TERMUX_PREFIX" \
+            BIONIC_HOME="$TERMUX_HOME" \
+            CARGO_TARGET_DIR="$TERMUX_HOME/target" \
+            "$GITHUB_WORKSPACE/.github/scripts/run-e2e-targets.sh" "${E2E_RUNS[@]}"
+      - name: Check bionic e2e gate
+        env:
+          E2E_INSTANCES: ${{ inputs.e2e_instances || '2' }}
+          E2E_SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          source "$GITHUB_WORKSPACE/.github/scripts/e2e-shard-plan.sh"
+          e2e_shard_plan "$E2E_INSTANCES" "$E2E_SHARD"
+          "$GITHUB_WORKSPACE/.github/scripts/realib-gate.sh" /tmp/test.log "${E2E_SUITES[@]}"
+      - name: Run optional Cat 2B oracle litmus
+        if: ${{ inputs.oracle_litmus && matrix.shard == 0 }}
+        working-directory: src
+        env:
+          VMP_ORACLE_LITMUS: "1"
+        run: |
+          set -euo pipefail
+          export HOME="$TERMUX_HOME"
+          export PATH="$TERMUX_PREFIX/bin:/tmp/host-toolchain-cleanbin:$PATH"
+          export LD_LIBRARY_PATH="$TERMUX_PREFIX/lib"
+          export CARGO_TARGET_DIR="$TERMUX_HOME/target"
+          cargo test -p vmp-lifter --test oracle_litmus -- --nocapture
+      - name: Save bionic realib dependency cache
+        if: ${{ always() && matrix.shard == 0 && steps.realib_cache.outcome == 'success' && steps.realib_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            /tmp/sqlite-amalgamation-3450300
+            /tmp/openssl-1.1.1w
+            /tmp/zlib-1.3.1
+            /tmp/yaml-cpp-0.9.0
+            /tmp/protobuf-31.1
+          key: realib-extdeps-bionic-layered-v1-${{ hashFiles('docker/Dockerfile', 'src/tests/realib_fixtures/**', 'src/vmp-lifter/tests/realib_*', 'src/vmp-lifter/tests/realib_common/**') }}
+      - name: Save bionic cargo cache
+        if: ${{ always() && steps.cargo_cache.outcome == 'success' && steps.cargo_cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            /data/data/com.termux/files/home/.cargo/registry
+            /data/data/com.termux/files/home/.cargo/git
+            /data/data/com.termux/files/home/target
+          key: cargo-bionic-${{ hashFiles('src/Cargo.lock') }}-${{ inputs.commit_sha }}-e2e-${{ matrix.shard }}
+      - name: Save bionic EH fixture cache
+        if: ${{ always() && matrix.shard == 0 && steps.eh_cache.outcome == 'success' && steps.eh_cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
           path: src/tests/cpp_fixtures/eh_fixture/build
           key: eh-fixture-bionic-${{ hashFiles('src/tests/cpp_fixtures/eh_fixture/**') }}
-
-      - if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-log-bionic-${{ inputs.commit_sha }}
-          path: /tmp/test.log
-          retention-days: 7
-          if-no-files-found: error
-
-      # Cat 2B diagnostic (2026-05-25): upload the per-test e2e fixture
-      # outputs (orig.so + protected.so + packed.so) so we can compare
-      # bionic-host lifter output against local glibc-host lifter output
-      # offline. Lets us locate the source of `x16 = 0x12` writes and
-      # other host-determinism bugs without needing a bionic debugger.
-      # Tarball-only to keep artifact file count low; the dir tree has
-      # ~150 sub-dirs.
-      - name: Package bionic e2e fixture outputs
+      - name: Package bionic diagnostics
         if: failure()
-        shell: bash
         run: |
-          set -e
-          E2E_DIR=src/vmp-lifter/fixtures/e2e
+          set -euo pipefail
           mkdir -p /tmp/bionic-diagnostics
-          cp /tmp/test.log /tmp/bionic-diagnostics/test.log
-          if [ -x "$TERMUX_HOME/target/debug/vmp-runner" ]; then
-            cp -a "$TERMUX_HOME/target/debug/vmp-runner" /tmp/bionic-diagnostics/vmp-runner
+          if [[ -f /tmp/test.log ]]; then
+            cp /tmp/test.log /tmp/bionic-diagnostics/test.log
           else
-            echo "FATAL: bionic vmp-runner missing at $TERMUX_HOME/target/debug/vmp-runner" >&2
-            exit 1
+            printf 'No e2e log was produced; inspect the failing setup step.\n' > /tmp/bionic-diagnostics/test.log
           fi
-          if [ ! -d "$E2E_DIR" ]; then
-            echo "FATAL: e2e fixtures dir missing at $E2E_DIR" >&2
-            exit 1
+          if [[ -x "$TERMUX_HOME/target/debug/vmp-runner" ]]; then
+            cp -a "$TERMUX_HOME/target/debug/vmp-runner" /tmp/bionic-diagnostics/vmp-runner
           fi
-          find "$E2E_DIR" -maxdepth 2 -type f \( -name '*.so' -o -name '*.json' -o -name '*.txt' -o -name '*.log' \) | sort | head -200
-          tar czf /tmp/bionic-diagnostics/e2e-fixtures.tar.gz -C src/vmp-lifter/fixtures e2e/
+          if [[ -d src/vmp-lifter/fixtures/e2e ]]; then
+            tar czf /tmp/bionic-diagnostics/e2e-fixtures.tar.gz \
+              -C src/vmp-lifter/fixtures e2e/
+          fi
           tar czf /tmp/e2e-fixtures-bionic.tar.gz -C /tmp bionic-diagnostics
-          ls -lh /tmp/e2e-fixtures-bionic.tar.gz
-
-      - if: failure()
+      - name: Upload bionic e2e diagnostics
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-fixtures-bionic-${{ inputs.commit_sha }}
+          name: e2e-diagnostics-bionic-${{ inputs.commit_sha }}-${{ matrix.shard }}
           path: /tmp/e2e-fixtures-bionic.tar.gz
           retention-days: 7
-          if-no-files-found: error
+          if-no-files-found: ignore
+      - name: Upload bionic e2e log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-log-bionic-${{ inputs.commit_sha }}-${{ matrix.shard }}
+          path: /tmp/test.log
+          retention-days: 7
+          if-no-files-found: ignore
 
   notify_failure:
-    # Fire on glibc OR bionic failure.
-    # NOTE: continue-on-error: true at JOB level MASKS needs.<job>.result
-    # to "success" (downstream sees the job as satisfied). The step-level
-    # outcome survives via the job's exposed `outputs.result` field — that's
-    # what we gate on for bionic.
-    needs: [private_glibc, private_bionic]
-    if: ${{ always() && (needs.private_glibc.result == 'failure' || needs.private_bionic.outputs.result == 'failure') }}
+    needs: [e2e_plan, public_demo, glibc_unit, bionic_unit, glibc_e2e, bionic_e2e]
+    if: ${{ always() && (needs.e2e_plan.result == 'failure' || needs.public_demo.result == 'failure' || needs.glibc_unit.result == 'failure' || needs.bionic_unit.result == 'failure' || needs.glibc_e2e.result == 'failure' || needs.bionic_e2e.result == 'failure') }}
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Send Telegram alert
         env:
-          GLIBC: ${{ needs.private_glibc.result }}
-          BIONIC: ${{ needs.private_bionic.result }}
-          FAILS_GLIBC: ${{ needs.private_glibc.outputs.failures }}
-          FAILS_BIONIC: ${{ needs.private_bionic.outputs.failures }}
+          E2E_PLAN: ${{ needs.e2e_plan.result }}
+          PUBLIC: ${{ needs.public_demo.result }}
+          GLIBC_UNIT: ${{ needs.glibc_unit.result }}
+          BIONIC_UNIT: ${{ needs.bionic_unit.result }}
+          GLIBC_E2E: ${{ needs.glibc_e2e.result }}
+          BIONIC_E2E: ${{ needs.bionic_e2e.result }}
           BRANCH: ${{ inputs.branch }}
+          LAYER: ${{ inputs.layer }}
           SHA: ${{ inputs.commit_sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          # Use printf with %s args (NOT heredoc) so backticks/$() in failure
-          # output don't trigger command substitution. Inputs are read from env,
-          # not interpolated into script source — prevents injection.
-          MSG=$(printf 'CI failed\nbranch: %s\nsha:    %s\nglibc:  %s\nbionic: %s\n\n--- glibc failures ---\n%s\n\n--- bionic failures ---\n%s\n\nRun: %s\n' \
-            "$BRANCH" "$SHA" "$GLIBC" "$BIONIC" "$FAILS_GLIBC" "$FAILS_BIONIC" "$RUN_URL")
-
-          if [ ${#MSG} -gt 4000 ]; then
-            MSG="${MSG:0:1800}"$'\n[... truncated ...]\n'"${MSG: -1800}"
-          fi
-
-          curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+          set -euo pipefail
+          MSG=$(printf 'CI failed\nbranch: %s\nlayer:  %s\nsha:    %s\ne2e plan: %s\npublic: %s\nglibc unit:  %s\nbionic unit: %s\nglibc e2e:   %s\nbionic e2e:  %s\n\nRun: %s\n' \
+            "$BRANCH" "$LAYER" "$SHA" "$E2E_PLAN" "$PUBLIC" "$GLIBC_UNIT" "$BIONIC_UNIT" "$GLIBC_E2E" "$BIONIC_E2E" "$RUN_URL")
+          if [ ${#MSG} -gt 4000 ]; then MSG="${MSG:0:3900}"; fi
+          curl -fsS -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${CHAT_ID}" \
-            --data-urlencode "text=${MSG}" > /dev/null
+            --data-urlencode "text=${MSG}" >/dev/null
