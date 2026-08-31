@@ -114,6 +114,61 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  csharp_glibc_unit:
+    if: ${{ inputs.layer == 'all' || inputs.layer == 'unit' }}
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_KEY }}
+      - name: Trust GitHub host key
+        run: ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
+      - name: Clone and verify private source
+        id: checkout_private
+        env:
+          PRIVATE_REPO_URL: ${{ secrets.PRIVATE_REPO_URL }}
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+        run: .github/scripts/checkout-private.sh "$PRIVATE_REPO_URL" "$COMMIT_SHA" src
+      - name: Initialize AsmStone for NuGet cache identity
+        working-directory: src
+        run: git submodule update --init --recursive -- third_party/AsmStone
+      - name: Install pinned .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.424
+      - name: Cache NuGet packages
+        id: nuget_cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.nuget/packages
+            ~/.local/share/NuGet/http-cache
+          key: nuget-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/cs/Vmp.sln', 'src/cs/**/*.csproj', 'src/cs/**/packages.lock.json', 'src/third_party/AsmStone/spec/source-lock.json', 'src/third_party/AsmStone/**/*.props', 'src/third_party/AsmStone/**/*.targets') }}
+          restore-keys: |
+            nuget-${{ runner.os }}-${{ runner.arch }}-
+      - name: Run C# glibc unit gate
+        id: csharp_gate
+        env:
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+          CSPROJ_GATE_LOG: ${{ runner.temp }}/csharp-glibc-unit.log
+          CSPROJ_GATE_JSON: ${{ runner.temp }}/csharp-glibc-unit.json
+          CSPROJ_DOTNET_SDK_FAMILY: 8.0
+          CSPROJ_DOTNET_SDK_VERSION: 8.0.424
+          CSPROJ_LAYER: unit
+          CSPROJ_JOB_NAME: csharp_glibc_unit
+        run: .github/scripts/csharp-gate.sh "$COMMIT_SHA" "$GITHUB_WORKSPACE/src"
+      - name: Upload C# gate provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: csharp-glibc-unit-${{ inputs.commit_sha }}
+          path: |
+            ${{ runner.temp }}/csharp-glibc-unit.log
+            ${{ runner.temp }}/csharp-glibc-unit.json
+          retention-days: 7
+          if-no-files-found: error
+
   bionic_unit:
     if: ${{ inputs.layer == 'all' || inputs.layer == 'unit' }}
     runs-on: ubuntu-24.04-arm
@@ -607,8 +662,8 @@ jobs:
           if-no-files-found: ignore
 
   notify_failure:
-    needs: [e2e_plan, public_demo, glibc_unit, bionic_unit, glibc_e2e, bionic_e2e]
-    if: ${{ always() && (needs.e2e_plan.result == 'failure' || needs.public_demo.result == 'failure' || needs.glibc_unit.result == 'failure' || needs.bionic_unit.result == 'failure' || needs.glibc_e2e.result == 'failure' || needs.bionic_e2e.result == 'failure') }}
+    needs: [e2e_plan, public_demo, glibc_unit, csharp_glibc_unit, bionic_unit, glibc_e2e, bionic_e2e]
+    if: ${{ always() && (needs.e2e_plan.result == 'failure' || needs.public_demo.result == 'failure' || needs.glibc_unit.result == 'failure' || needs.csharp_glibc_unit.result == 'failure' || needs.bionic_unit.result == 'failure' || needs.glibc_e2e.result == 'failure' || needs.bionic_e2e.result == 'failure') }}
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Send Telegram alert
@@ -616,6 +671,7 @@ jobs:
           E2E_PLAN: ${{ needs.e2e_plan.result }}
           PUBLIC: ${{ needs.public_demo.result }}
           GLIBC_UNIT: ${{ needs.glibc_unit.result }}
+          CSHARP_GLIBC_UNIT: ${{ needs.csharp_glibc_unit.result }}
           BIONIC_UNIT: ${{ needs.bionic_unit.result }}
           GLIBC_E2E: ${{ needs.glibc_e2e.result }}
           BIONIC_E2E: ${{ needs.bionic_e2e.result }}
@@ -627,8 +683,8 @@ jobs:
           CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           set -euo pipefail
-          MSG=$(printf 'CI failed\nbranch: %s\nlayer:  %s\nsha:    %s\ne2e plan: %s\npublic: %s\nglibc unit:  %s\nbionic unit: %s\nglibc e2e:   %s\nbionic e2e:  %s\n\nRun: %s\n' \
-            "$BRANCH" "$LAYER" "$SHA" "$E2E_PLAN" "$PUBLIC" "$GLIBC_UNIT" "$BIONIC_UNIT" "$GLIBC_E2E" "$BIONIC_E2E" "$RUN_URL")
+          MSG=$(printf 'CI failed\nbranch: %s\nlayer:  %s\nsha:    %s\ne2e plan: %s\npublic: %s\nglibc unit:  %s\ncsharp glibc unit: %s\nbionic unit: %s\nglibc e2e:   %s\nbionic e2e:  %s\n\nRun: %s\n' \
+            "$BRANCH" "$LAYER" "$SHA" "$E2E_PLAN" "$PUBLIC" "$GLIBC_UNIT" "$CSHARP_GLIBC_UNIT" "$BIONIC_UNIT" "$GLIBC_E2E" "$BIONIC_E2E" "$RUN_URL")
           if [ ${#MSG} -gt 4000 ]; then MSG="${MSG:0:3900}"; fi
           curl -fsS -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${CHAT_ID}" \

@@ -11,6 +11,8 @@ commit SHA. The default `all` layer starts independent jobs in parallel:
 
 - `public_demo`: public example smoke test
 - `glibc_unit` / `bionic_unit`: workspace library and binary unit tests only
+- `csharp_glibc_unit`: pinned .NET 8 C# solution, AsmStone and NativeBlob unit
+  gate during migration coexistence
 - `glibc_e2e` / `bionic_e2e`: EH fixture plus all realib suites, split into
   independently scheduled shards (up to four ARM runners per libc)
 
@@ -27,6 +29,12 @@ workspace and then precompile the same targets again.
 Failed checkout, proxy, or toolchain setup stops that job immediately. Logs and
 diagnostics are uploaded only when they exist, so setup failures do not create
 secondary artifact failures or fake suite failures.
+
+The C# job checks out the same full source SHA as the Rust jobs, initializes the
+pinned `third_party/AsmStone` gitlink, installs SDK `8.0.424`, and uploads a
+JSON provenance receipt plus a non-empty gate log. It runs in parallel with the
+Rust unit jobs during coexistence; protected-ELF artifact production and bionic
+consumption are added only after the C# production cutover gate is green.
 
 ## Usage
 
