@@ -66,6 +66,8 @@ asmstone_catalog_path="$asmstone_path"
 asmstone_catalog_file_sha=""
 sdk_version=""
 dotnet_resolved=""
+sdk_pin_path=""
+sdk_pin_created=false
 restore_status="not-run"
 restore_rc=""
 build_status="not-run"
@@ -169,6 +171,9 @@ make_temp_dir() {
 
 temp_dir=""
 cleanup() {
+  if [[ "$sdk_pin_created" == true && -n "$sdk_pin_path" && -f "$sdk_pin_path" ]]; then
+    rm -f -- "$sdk_pin_path"
+  fi
   if [[ -n "$temp_dir" && -d "$temp_dir" ]]; then
     rm -rf -- "$temp_dir"
   fi
@@ -383,8 +388,20 @@ if [[ "$first_failure" -eq 0 ]]; then
 fi
 
 if [[ "$first_failure" -eq 0 ]]; then
+  sdk_pin_path="$source_dir_abs/global.json"
+  if [[ ! -e "$sdk_pin_path" ]]; then
+    if printf '%s\n' '{"sdk":{"version":"8.0.424","rollForward":"disable","allowPrerelease":false}}' \
+        > "$sdk_pin_path" 2>/dev/null; then
+      sdk_pin_created=true
+    else
+      record_failure 5 sdk "could not create temporary global.json SDK pin"
+    fi
+  fi
+fi
+
+if [[ "$first_failure" -eq 0 ]]; then
   sdk_output="$temp_dir/dotnet-version.txt"
-  if run_capture dotnet_version "$sdk_output" "$dotnet_resolved" --version; then
+  if run_source_capture dotnet_version "$sdk_output" "$dotnet_resolved" --version; then
     sdk_version=$(grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' "$sdk_output" | tail -n 1)
     sdk_pattern="^${required_sdk_family//./\\.}\\.[0-9]+$"
     if [[ ! "$sdk_version" =~ $sdk_pattern ]]; then

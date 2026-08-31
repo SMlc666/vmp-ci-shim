@@ -247,6 +247,7 @@ class CSharpGateTest(unittest.TestCase):
         self.assertIn("runs-on: ubuntu-24.04-arm", workflow)
         self.assertIn("uses: actions/setup-dotnet@v4", workflow)
         self.assertIn("dotnet-version: 8.0.424", workflow)
+        self.assertIn('CSPROJ_DOTNET_SDK_FAMILY: "8.0"', workflow)
         self.assertIn("uses: actions/cache@v4", workflow)
         self.assertIn("~/.nuget/packages", workflow)
         self.assertIn("src/cs/Vmp.sln", workflow)
