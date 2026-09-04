@@ -177,6 +177,57 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  csharp_performance:
+    if: ${{ inputs.layer == 'all' || inputs.layer == 'unit' }}
+    runs-on: ubuntu-24.04-arm
+    # Performance is an informational signal; the JSON still records any
+    # blocked, regression, or error status from the gate.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_KEY }}
+      - name: Trust GitHub host key
+        run: ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts
+      - name: Clone and verify private source
+        id: checkout_private
+        env:
+          PRIVATE_REPO_URL: ${{ secrets.PRIVATE_REPO_URL }}
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+        run: .github/scripts/checkout-private.sh "$PRIVATE_REPO_URL" "$COMMIT_SHA" src
+      - name: Initialize and verify AsmStone gitlink
+        working-directory: src
+        run: |
+          set -euo pipefail
+          expected='477e07eb58f26c6c05960a3f5e55a2f3798df8cb'
+          git submodule update --init --recursive third_party/AsmStone
+          gitlink=$(git ls-tree HEAD -- third_party/AsmStone | awk '$NF == "third_party/AsmStone" { print $3; exit }')
+          test "$gitlink" = "$expected"
+          test "$(git -C third_party/AsmStone rev-parse HEAD)" = "$expected"
+      - name: Set up .NET SDK 8.0.424
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.424'
+      - name: Run C# performance benchmark gate
+        id: csharp_performance_gate
+        env:
+          SOURCE_DIR: src
+          SOURCE_SHA: ${{ inputs.commit_sha }}
+          CSHARP_PERFORMANCE_LOG: /tmp/csharp-performance.log
+          CSHARP_PERFORMANCE_REPORT: /tmp/csharp-performance.json
+        run: .github/scripts/csharp-performance-gate.sh
+      - name: Upload C# performance report and log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: csharp-performance-${{ inputs.commit_sha }}
+          path: |
+            /tmp/csharp-performance.log
+            /tmp/csharp-performance.json
+          retention-days: 7
+          if-no-files-found: ignore
+
   bionic_unit:
     if: ${{ inputs.layer == 'all' || inputs.layer == 'unit' }}
     runs-on: ubuntu-24.04-arm
