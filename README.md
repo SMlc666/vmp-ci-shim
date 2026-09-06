@@ -11,6 +11,10 @@ commit SHA. The default `all` layer starts independent jobs in parallel:
 
 - `public_demo`: public example smoke test
 - `glibc_unit` / `bionic_unit`: workspace library and binary unit tests only
+- `csharp_glibc_unit`: pinned .NET 8 C# solution, AsmStone provenance and
+  nonzero test-count gate
+- `csharp_performance`: informational C# allocation/throughput report; blocked
+  native cases remain explicit non-passing diagnostics
 - `glibc_e2e` / `bionic_e2e`: EH fixture plus all realib suites, split into
   independently scheduled shards (up to four ARM runners per libc)
 
@@ -27,6 +31,14 @@ workspace and then precompile the same targets again.
 Failed checkout, proxy, or toolchain setup stops that job immediately. Logs and
 diagnostics are uploaded only when they exist, so setup failures do not create
 secondary artifact failures or fake suite failures.
+
+The C# gate pins .NET SDK `8.0.424`, AsmStone commit
+`477e07eb58f26c6c05960a3f5e55a2f3798df8cb`, LLVM catalog commit
+`87b1a2f7246bc0a4ed5335c45635bddb75847890`, generated catalog input SHA
+`728f5eb9a7fb5d04f417e61e7f74181db7c17f1afebf512131c188be1066b82f`, and
+the checked-in AsmStone license SHA
+`f238b19e6b9fecb0ad94dd585b1f6cedd2e49c97f4c556c6281c0341e636146d`.
+The gate result JSON records all of these identities for artifact provenance.
 
 ## Usage
 

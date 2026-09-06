@@ -7,6 +7,7 @@ readonly EXPECTED_DOTNET_SDK="8.0.424"
 readonly EXPECTED_ASMSTONE_COMMIT="477e07eb58f26c6c05960a3f5e55a2f3798df8cb"
 readonly EXPECTED_LLVM_COMMIT="87b1a2f7246bc0a4ed5335c45635bddb75847890"
 readonly EXPECTED_CATALOG_SHA256="728f5eb9a7fb5d04f417e61e7f74181db7c17f1afebf512131c188be1066b82f"
+readonly EXPECTED_ASMSTONE_LICENSE_SHA256="f238b19e6b9fecb0ad94dd585b1f6cedd2e49c97f4c556c6281c0341e636146d"
 
 source_dir=${SOURCE_DIR:-}
 source_sha=${SOURCE_SHA:-}
@@ -121,6 +122,7 @@ write_result() {
   GATE_ASMSTONE_COMMIT="$EXPECTED_ASMSTONE_COMMIT" \
   GATE_LLVM_COMMIT="$EXPECTED_LLVM_COMMIT" \
   GATE_CATALOG_SHA256="$EXPECTED_CATALOG_SHA256" \
+  GATE_LICENSE_SHA256="$EXPECTED_ASMSTONE_LICENSE_SHA256" \
   GATE_TESTS_EXECUTED="$tests_executed" \
   GATE_LOG_PATH="$log_path" \
   python3 - "$result_path" <<'PY'
@@ -142,6 +144,7 @@ record = {
     "asmstone_commit": os.environ["GATE_ASMSTONE_COMMIT"],
     "llvm_commit": os.environ["GATE_LLVM_COMMIT"],
     "asmstone_catalog_sha256": os.environ["GATE_CATALOG_SHA256"],
+    "asmstone_license_sha256": os.environ["GATE_LICENSE_SHA256"],
     "tests_executed": optional_int(os.environ["GATE_TESTS_EXECUTED"]),
     "log_path": os.environ["GATE_LOG_PATH"],
 }
@@ -220,12 +223,15 @@ verify_asmstone() {
 
   local lock_path="$source_dir/third_party/AsmStone/spec/source-lock.json"
   local catalog_path="$source_dir/third_party/AsmStone/src/AsmStone/Generated/A64GeneratedInstructionTable.cs"
+  local license_path="$source_dir/third_party/AsmStone/LICENSE"
   [[ -f "$lock_path" ]] || fail_gate 1 catalog-provenance "missing AsmStone source-lock.json"
   [[ -f "$catalog_path" ]] || fail_gate 1 catalog-provenance "missing generated LLVM catalog"
+  [[ -f "$license_path" ]] || fail_gate 1 license-provenance "missing AsmStone LICENSE"
 
   set +e
   catalog_output=$(python3 - "$lock_path" "$catalog_path" \
-    "$EXPECTED_LLVM_COMMIT" "$EXPECTED_CATALOG_SHA256" <<'PY'
+    "$license_path" "$EXPECTED_LLVM_COMMIT" "$EXPECTED_CATALOG_SHA256" \
+    "$EXPECTED_ASMSTONE_LICENSE_SHA256" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -234,8 +240,10 @@ import sys
 
 lock_path = pathlib.Path(sys.argv[1])
 catalog_path = pathlib.Path(sys.argv[2])
-expected_llvm_commit = sys.argv[3]
-expected_catalog_sha = sys.argv[4]
+license_path = pathlib.Path(sys.argv[3])
+expected_llvm_commit = sys.argv[4]
+expected_catalog_sha = sys.argv[5]
+expected_license_sha = sys.argv[6]
 try:
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
     llvm = lock["sources"]["llvm"]
@@ -261,6 +269,14 @@ if actual_generated_sha != generated_sha:
     )
     raise SystemExit(1)
 
+actual_license_sha = hashlib.sha256(license_path.read_bytes()).hexdigest()
+if actual_license_sha != expected_license_sha:
+    print(
+        f"AsmStone LICENSE SHA={actual_license_sha}, expected {expected_license_sha}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
 catalog = catalog_path.read_text(encoding="utf-8")
 if f"LLVM source commit: {expected_llvm_commit}" not in catalog:
     print("generated catalog LLVM commit comment does not match source lock", file=sys.stderr)
@@ -272,6 +288,7 @@ if f"TableGen JSON SHA-256: {expected_catalog_sha}" not in catalog:
 print(f"LLVM_COMMIT_OK: {actual_commit}")
 print(f"LLVM_CATALOG_INPUT_SHA_OK: {actual_catalog_sha}")
 print(f"LLVM_GENERATED_CATALOG_SHA_OK: {actual_generated_sha}")
+print(f"ASMSTONE_LICENSE_SHA_OK: {actual_license_sha}")
 PY
   )
   local catalog_code=$?

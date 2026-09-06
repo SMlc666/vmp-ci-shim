@@ -25,10 +25,12 @@ class CSharpGateTest(unittest.TestCase):
         self.assertIn('EXPECTED_DOTNET_SDK="8.0.424"', text)
         self.assertIn('EXPECTED_ASMSTONE_COMMIT="477e07eb58f26c6c05960a3f5e55a2f3798df8cb"', text)
         self.assertIn('EXPECTED_LLVM_COMMIT="87b1a2f7246bc0a4ed5335c45635bddb75847890"', text)
+        self.assertIn('EXPECTED_ASMSTONE_LICENSE_SHA256="f238b19e6b9fecb0ad94dd585b1f6cedd2e49c97f4c556c6281c0341e636146d"', text)
         self.assertIn("unable to prove that dotnet test executed at least one test", text)
         self.assertIn("zero tests were executed", text)
         self.assertIn("gitlink", text)
         self.assertIn("tablegenJsonSha256", text)
+        self.assertIn("ASMSTONE_LICENSE_SHA_OK", text)
         subprocess.run(["bash", "-n", str(GATE)], check=True)
 
     def test_gate_rejects_short_sha_before_using_source(self) -> None:
