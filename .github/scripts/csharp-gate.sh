@@ -417,6 +417,22 @@ if [[ "$test_code" -ne 0 ]]; then
 fi
 check_test_count "$test_output" "$trx_path"
 
+# Keep the replacement boundary explicit in CI instead of relying only on the
+# aggregate solution test. These focused commands are the reproducibility
+# probes for generated encoding, managed decoding, and NativeBlob policy.
+run_dotnet_step asmstone-encoder-differential test \
+  "$source_dir/cs/tests/Vmp.Arm64.Encoding.Tests/Vmp.Arm64.Encoding.Tests.csproj" \
+  --configuration Release --no-build --no-restore --nologo \
+  --filter FullyQualifiedName~AsmStoneGeneratedEncodingParityTests
+run_dotnet_step asmstone-decoder-differential test \
+  "$source_dir/cs/tests/Vmp.Lifter.Arm64.Tests/Vmp.Lifter.Arm64.Tests.csproj" \
+  --configuration Release --no-build --no-restore --nologo \
+  --filter FullyQualifiedName~AsmStoneArm64AdapterTests
+run_dotnet_step native-blob-policy-differential test \
+  "$source_dir/cs/tests/Vmp.Runtime.Native.Tests/Vmp.Runtime.Native.Tests.csproj" \
+  --configuration Release --no-build --no-restore --nologo \
+  --filter FullyQualifiedName~NativeBlobTests
+
 printf 'CSHARP_GATE_OK: source=%s sdk=%s tests=%s\n' \
   "${source_sha,,}" "$EXPECTED_DOTNET_SDK" "$tests_executed" | tee -a "$log_path"
 write_result "pass" "" 0 "" || \

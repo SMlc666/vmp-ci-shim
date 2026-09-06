@@ -31,6 +31,9 @@ class CSharpGateTest(unittest.TestCase):
         self.assertIn("gitlink", text)
         self.assertIn("tablegenJsonSha256", text)
         self.assertIn("ASMSTONE_LICENSE_SHA_OK", text)
+        self.assertIn("asmstone-encoder-differential", text)
+        self.assertIn("asmstone-decoder-differential", text)
+        self.assertIn("native-blob-policy-differential", text)
         subprocess.run(["bash", "-n", str(GATE)], check=True)
 
     def test_gate_rejects_short_sha_before_using_source(self) -> None:
